@@ -38,6 +38,7 @@ class CloudMediaScanner {
   Future<CloudMediaScanResult> scan({
     required WebDAVConnection connection,
     required String rootPath,
+    String? sourceId,
     bool recursive = true,
     void Function(int directoriesVisited)? onProgress,
   }) async {
@@ -64,7 +65,7 @@ class CloudMediaScanner {
         if (kind == null) continue;
         files.add(
           CloudMediaAsset(
-            sourceId: connection.id,
+            sourceId: sourceId ?? connection.id,
             relativePath: _relativeToRoot(root, entry.path),
             workKey: _workKey(root, directory),
             name: entry.name,
@@ -91,13 +92,19 @@ class CloudMediaScanner {
     bool recursive = true,
     void Function(int directoriesVisited)? onProgress,
   }) async {
+    final database = CloudMediaIndexDatabase.instance;
+    final libraryId = await database.ensureLibraryRoot(
+      connectionId: connection.id,
+      rootPath: rootPath,
+    );
     final result = await scan(
       connection: connection,
       rootPath: rootPath,
+      sourceId: libraryId,
       recursive: recursive,
       onProgress: onProgress,
     );
-    await CloudMediaIndexDatabase.instance.upsertAssets(
+    await database.upsertAssets(
       result.assets
           .map(
             (asset) => {
@@ -116,11 +123,13 @@ class CloudMediaScanner {
           )
           .toList(),
     );
+    await database.markLibraryRootScanned(libraryId);
     final scrapeResult = await CloudMediaScraper().scrape(
-      sourceId: connection.id,
+      sourceId: libraryId,
       assets: result.assets,
     );
     return result.copyWith(
+      libraryId: libraryId,
       matchedWorks: scrapeResult.matched,
       failedWorks: scrapeResult.failed,
     );

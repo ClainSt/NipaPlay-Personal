@@ -2855,7 +2855,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         label: '查看云媒体索引',
         desktopIcon: Icons.video_library_outlined,
         phoneIcon: cupertino.CupertinoIcons.square_list,
-        onPressed: _showCloudMediaIndex,
+        onPressed: () => _showCloudMediaIndex(),
       ));
     }
     return actions;
@@ -2875,7 +2875,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       BlurSnackBar.show(context,
           '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
           '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容');
-      await _showCloudMediaIndex();
+      await _showCloudMediaIndex(libraryId: result.libraryId);
     } catch (error) {
       if (mounted) BlurSnackBar.show(context, '云媒体库扫描失败：$error');
     } finally {
@@ -2883,15 +2883,20 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     }
   }
 
-  Future<void> _showCloudMediaIndex() async {
+  Future<void> _showCloudMediaIndex({String? libraryId}) async {
     final location = _mountedLocation;
     final connection = location?.webdavConnection;
     if (connection == null) return;
     try {
-      final rows = await CloudMediaIndexDatabase.instance
-          .getAssets(sourceId: connection.id);
-      final works = await CloudMediaIndexDatabase.instance
-          .getWorks(sourceId: connection.id);
+      final database = CloudMediaIndexDatabase.instance;
+      final selectedLibraryId = libraryId ??
+          await database.getLibraryRootId(
+            connectionId: connection.id,
+            rootPath: _currentMountedPath,
+          ) ??
+          connection.id;
+      final rows = await database.getAssets(sourceId: selectedLibraryId);
+      final works = await database.getWorks(sourceId: selectedLibraryId);
       if (!mounted) return;
       await showDialog<void>(
         context: context,

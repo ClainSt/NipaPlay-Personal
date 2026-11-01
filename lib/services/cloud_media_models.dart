@@ -4,19 +4,26 @@ class CloudMediaScanResult {
   const CloudMediaScanResult({
     required this.rootPath,
     required this.assets,
+    this.libraryId,
     this.matchedWorks = 0,
     this.failedWorks = 0,
   });
 
   final String rootPath;
   final List<CloudMediaAsset> assets;
+  final String? libraryId;
   final int matchedWorks;
   final int failedWorks;
 
-  CloudMediaScanResult copyWith({int? matchedWorks, int? failedWorks}) =>
+  CloudMediaScanResult copyWith({
+    String? libraryId,
+    int? matchedWorks,
+    int? failedWorks,
+  }) =>
       CloudMediaScanResult(
         rootPath: rootPath,
         assets: assets,
+        libraryId: libraryId ?? this.libraryId,
         matchedWorks: matchedWorks ?? this.matchedWorks,
         failedWorks: failedWorks ?? this.failedWorks,
       );

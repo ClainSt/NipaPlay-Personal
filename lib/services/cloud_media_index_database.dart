@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/utils/anime_info_parse.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:uuid/uuid.dart';
 
 /// Private, app-local catalog database used by the cloud library feature.
 /// It is separate from NipaPlay's hash-oriented metadata database.
@@ -25,7 +26,7 @@ class CloudMediaIndexDatabase {
         '${support.path}${Platform.pathSeparator}cloud_media_library.db';
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, _) async {
         await db.execute('''
         CREATE TABLE cloud_media_asset (
@@ -58,6 +59,7 @@ class CloudMediaIndexDatabase {
           'ON cloud_media_asset(source_id, work_key)',
         );
         await _createWorkTable(db);
+        await _createLibraryRootTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createWorkTable(db);
@@ -85,6 +87,7 @@ class CloudMediaIndexDatabase {
             WHERE tmdb_id IS NOT NULL AND tmdb_unknown_id IS NULL
           ''');
         }
+        if (oldVersion < 4) await _createLibraryRootTable(db);
       },
     );
   }
@@ -161,6 +164,108 @@ class CloudMediaIndexDatabase {
       }
     });
   }
+
+  Future<String> ensureLibraryRoot({
+    required String connectionId,
+    required String rootPath,
+  }) async {
+    final db = await database;
+    final normalizedPath = _normalizeRootPath(rootPath);
+    final existing = await db.query(
+      'cloud_media_library_root',
+      columns: ['id'],
+      where: 'connection_id = ? AND root_path = ?',
+      whereArgs: [connectionId, normalizedPath],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return existing.first['id']! as String;
+
+    final segments = normalizedPath
+        .split('/')
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    await db.insert(
+      'cloud_media_library_root',
+      {
+        'id': const Uuid().v4(),
+        'connection_id': connectionId,
+        'root_path': normalizedPath,
+        'name': segments.isEmpty ? '/' : segments.last,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    final created = await db.query(
+      'cloud_media_library_root',
+      columns: ['id'],
+      where: 'connection_id = ? AND root_path = ?',
+      whereArgs: [connectionId, normalizedPath],
+      limit: 1,
+    );
+    if (created.isEmpty) {
+      throw StateError('Could not register cloud library root');
+    }
+    return created.first['id']! as String;
+  }
+
+  Future<String?> getLibraryRootId({
+    required String connectionId,
+    required String rootPath,
+  }) async {
+    final db = await database;
+    final rows = await db.query(
+      'cloud_media_library_root',
+      columns: ['id'],
+      where: 'connection_id = ? AND root_path = ?',
+      whereArgs: [connectionId, _normalizeRootPath(rootPath)],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['id'] as String;
+  }
+
+  Future<void> markLibraryRootScanned(String libraryId) async {
+    final db = await database;
+    await db.update(
+      'cloud_media_library_root',
+      {'last_scanned_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [libraryId],
+    );
+  }
+
+  Future<List<Map<String, Object?>>> getLibraryRoots({
+    String? connectionId,
+  }) async {
+    final db = await database;
+    return db.query(
+      'cloud_media_library_root',
+      where: connectionId == null ? null : 'connection_id = ?',
+      whereArgs: connectionId == null ? null : [connectionId],
+      orderBy: 'name COLLATE NOCASE',
+    );
+  }
+
+  String _normalizeRootPath(String path) {
+    var normalized = path.trim().replaceAll('\\', '/');
+    if (!normalized.startsWith('/')) normalized = '/$normalized';
+    normalized = normalized.replaceAll(RegExp(r'/+'), '/');
+    if (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  Future<void> _createLibraryRootTable(DatabaseExecutor db) => db.execute('''
+    CREATE TABLE cloud_media_library_root (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      root_path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_scanned_at TEXT,
+      UNIQUE(connection_id, root_path)
+    )
+  ''');
 
   Future<List<Map<String, Object?>>> getAssets({
     String? sourceId,
