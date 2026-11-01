@@ -61,7 +61,7 @@ Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`�
 | 项目 | 结果 | 验证依据 |
 | --- | --- | --- |
 | 自动化测试 | 通过 | `flutter test --no-pub --reporter json`：1,516 项完成，37 项跳过，0 项失败；包含 WebDAV 请求拦截、媒体索引同步往返和人工关联冲突用例。 |
-| 本次改动静态分析 | 通过 | `cloud_anime_detail_sections.dart` 单文件分析无问题。 |
+| 本次改动静态分析 | 无错误 | `cloud_anime_detail_sections.dart` 单文件分析无问题；`library_management_tab.dart` 有 88 条该大型旧文件的 info/warning，未报告 error。 |
 | 全项目静态分析 | 未通过 | 当前完整分析报告 5,477 项，其中包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
 | Windows 发布构建 | 通过 | `scripts/package_personal_release.ps1 -Build` 完整执行成功；程序隐藏启动后保持运行 8 秒。 |
 | Android 发布构建 | 通过 | 同一打包脚本成功生成 arm64 APK；`apksigner` 验证 v2 签名，证书 SHA-256 为 `a083e7205dc014dbfd1a0b52f67a3f91a934ffe94b0f3d27ee268166570b4a9e`。 |

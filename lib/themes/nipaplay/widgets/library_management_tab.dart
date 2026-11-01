@@ -47,6 +47,7 @@ import 'package:nipaplay/themes/nipaplay/widgets/search_bar_action_button.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/smb_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_smb_connection_dialog.dart';
@@ -3064,12 +3065,14 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                         Expanded(
                                           child: poster?.startsWith('http') ==
                                                   true
-                                              ? Image.network(poster!,
+                                              ? CachedNetworkImageWidget(
+                                                  imageUrl: poster!,
                                                   fit: BoxFit.cover,
                                                   width: double.infinity,
-                                                  errorBuilder: (_, __, ___) =>
+                                                  errorBuilder: (_, __) =>
                                                       const Icon(
-                                                          Icons.movie_outlined))
+                                                          Icons.movie_outlined),
+                                                )
                                               : const Center(
                                                   child: Icon(
                                                       Icons.movie_outlined)),
