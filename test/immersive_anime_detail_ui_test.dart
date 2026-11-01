@@ -77,6 +77,42 @@ void main() {
     expect(restartedProvider.enableImmersiveAnimeDetail, isTrue);
   });
 
+  test('library scrape modes and detail sections persist independently',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final provider = LabsSettingsProvider();
+    await provider.ready;
+
+    expect(provider.localLibraryScrapeMode, LibraryScrapeMode.original);
+    expect(provider.webDavLibraryScrapeMode, LibraryScrapeMode.original);
+    expect(provider.enableCloudAnimeDetailSections, isFalse);
+
+    await provider.setLocalLibraryScrapeMode(LibraryScrapeMode.tmdbId);
+    await provider.setEnableCloudAnimeDetailSections(true);
+    expect(provider.webDavLibraryScrapeMode, LibraryScrapeMode.original);
+    await provider.setWebDavLibraryScrapeMode(LibraryScrapeMode.tmdbId);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString(SettingsKeys.labsLocalLibraryScrapeMode),
+      LibraryScrapeMode.tmdbId.name,
+    );
+    expect(
+      prefs.getString(SettingsKeys.labsWebDavLibraryScrapeMode),
+      LibraryScrapeMode.tmdbId.name,
+    );
+    expect(
+      prefs.getBool(SettingsKeys.labsEnableCloudAnimeDetailSections),
+      isTrue,
+    );
+
+    final restartedProvider = LabsSettingsProvider();
+    await restartedProvider.ready;
+    expect(restartedProvider.localLibraryScrapeMode, LibraryScrapeMode.tmdbId);
+    expect(restartedProvider.webDavLibraryScrapeMode, LibraryScrapeMode.tmdbId);
+    expect(restartedProvider.enableCloudAnimeDetailSections, isTrue);
+  });
+
   test('native media detail glass follows the OS capability bridge', () async {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
