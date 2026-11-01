@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cue_sheet_parser.dart';
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 
 class CloudCueSheetDialog {
   const CloudCueSheetDialog._();
@@ -9,7 +10,7 @@ class CloudCueSheetDialog {
     required String title,
     required List<CueSheetTrack> tracks,
   }) {
-    return showDialog<CueSheetTrack>(
+    return showInViewDialog<CueSheetTrack>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(title),

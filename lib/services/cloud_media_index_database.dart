@@ -737,6 +737,72 @@ class CloudMediaIndexDatabase {
     });
   }
 
+  Future<void> upsertTmdbWorkMetadata({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String tmdbType,
+    required String title,
+    required String originalTitle,
+    required String overview,
+    required String? posterUrl,
+    required double? rating,
+    required String metadataJson,
+  }) async {
+    if (tmdbType != 'tv' && tmdbType != 'movie') {
+      throw ArgumentError.value(tmdbType, 'tmdbType');
+    }
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.rawInsert('''
+        INSERT INTO cloud_media_work
+          (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id,
+           tmdb_movie_id, tmdb_unknown_id, title, title_cn, overview,
+           poster_url, rating, metadata_json, metadata_status, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'matched', ?)
+        ON CONFLICT(source_id, work_key) DO UPDATE SET
+          tmdb_id=excluded.tmdb_id, tmdb_type=excluded.tmdb_type,
+          tmdb_tv_id=excluded.tmdb_tv_id,
+          tmdb_movie_id=excluded.tmdb_movie_id,
+          tmdb_unknown_id=NULL, title=excluded.title,
+          title_cn=excluded.title_cn, overview=excluded.overview,
+          poster_url=excluded.poster_url, rating=excluded.rating,
+          metadata_json=excluded.metadata_json,
+          metadata_status='matched', updated_at=excluded.updated_at
+        WHERE cloud_media_work.relation_locked=0
+      ''', [
+        sourceId,
+        workKey,
+        tmdbId,
+        tmdbType,
+        tmdbType == 'tv' ? tmdbId : null,
+        tmdbType == 'movie' ? tmdbId : null,
+        originalTitle,
+        title,
+        overview,
+        posterUrl,
+        rating,
+        metadataJson,
+        DateTime.now().toUtc().toIso8601String(),
+      ]);
+      await txn.update(
+        'cloud_media_asset',
+        {
+          'tmdb_id': tmdbId,
+          'tmdb_type': tmdbType,
+          'tmdb_tv_id': tmdbType == 'tv' ? tmdbId : null,
+          'tmdb_movie_id': tmdbType == 'movie' ? tmdbId : null,
+          'tmdb_unknown_id': null,
+        },
+        where: '''
+          source_id = ? AND work_key = ? AND relation_locked=0
+          AND (tmdb_unknown_id = ? OR tmdb_id = ?)
+        ''',
+        whereArgs: [sourceId, workKey, tmdbId, tmdbId],
+      );
+    });
+  }
+
   Future<List<Map<String, Object?>>> getWorks({String? sourceId}) async {
     final db = await database;
     return db.query(

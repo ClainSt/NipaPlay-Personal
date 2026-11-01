@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
 
 typedef CloudAnimeAssetOpenCallback = Future<void> Function(
@@ -123,7 +124,7 @@ class _CloudAnimeWorkCard extends StatelessWidget {
                   child: TextButton.icon(
                     onPressed: snapshot.connectionState != ConnectionState.done
                         ? null
-                        : () => showDialog<void>(
+                        : () => showInViewDialog<void>(
                               context: context,
                               builder: (_) => CloudMediaWorkDialog(
                                 sourceId: sourceId,

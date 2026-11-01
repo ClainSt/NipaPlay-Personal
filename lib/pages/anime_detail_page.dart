@@ -71,6 +71,7 @@ import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_anime_detail_sections.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_cue_sheet_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
 import 'package:nipaplay/services/cue_sheet_parser.dart';
@@ -3293,7 +3294,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Future<void> _showCloudMediaSectionsDialog(BangumiAnime anime) {
-    return showDialog<void>(
+    return showInViewDialog<void>(
       context: context,
       builder: (_) => Dialog(
         child: SizedBox(

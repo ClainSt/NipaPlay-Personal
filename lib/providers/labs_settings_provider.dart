@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:nipaplay/constants/settings_keys.dart';
+import 'package:nipaplay/services/tmdb_metadata_service.dart';
 import 'package:nipaplay/utils/settings_storage.dart';
 
 enum LibraryScrapeMode { original, tmdbId }
@@ -21,12 +22,14 @@ class LabsSettingsProvider extends ChangeNotifier {
   LibraryScrapeMode _localLibraryScrapeMode = LibraryScrapeMode.original;
   LibraryScrapeMode _webDavLibraryScrapeMode = LibraryScrapeMode.original;
   bool _isLoaded = false;
+  bool _tmdbReadAccessTokenConfigured = false;
 
   bool get enableImmersiveAnimeDetail => _enableImmersiveAnimeDetail;
   bool get enableCloudAnimeDetailSections => _enableCloudAnimeDetailSections;
   LibraryScrapeMode get localLibraryScrapeMode => _localLibraryScrapeMode;
   LibraryScrapeMode get webDavLibraryScrapeMode => _webDavLibraryScrapeMode;
   bool get isLoaded => _isLoaded;
+  bool get tmdbReadAccessTokenConfigured => _tmdbReadAccessTokenConfigured;
 
   Future<void> _loadSettings() async {
     _enableImmersiveAnimeDetail = await SettingsStorage.loadBool(
@@ -49,6 +52,8 @@ class LabsSettingsProvider extends ChangeNotifier {
         defaultValue: 'original',
       ),
     );
+    _tmdbReadAccessTokenConfigured =
+        await TmdbMetadataService.hasReadAccessToken();
     _isLoaded = true;
     notifyListeners();
   }
@@ -95,6 +100,13 @@ class LabsSettingsProvider extends ChangeNotifier {
       SettingsKeys.labsWebDavLibraryScrapeMode,
       mode.name,
     );
+  }
+
+  Future<void> setTmdbReadAccessToken(String token) async {
+    await ready;
+    await TmdbMetadataService.saveReadAccessToken(token);
+    _tmdbReadAccessTokenConfigured = token.trim().isNotEmpty;
+    notifyListeners();
   }
 
   static LibraryScrapeMode _readScrapeMode(String? value) =>

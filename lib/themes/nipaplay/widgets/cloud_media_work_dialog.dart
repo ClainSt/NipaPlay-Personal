@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/services/auto_sync_service.dart';
 
 typedef CloudAssetOpenCallback = Future<void> Function(
@@ -60,7 +61,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
   Future<void> _editAsset(Map<String, Object?> asset) async {
     var selectedWorkKey = asset['work_key']?.toString() ?? '.';
     var selectedCategory = asset['category']?.toString() ?? 'review';
-    final changed = await showDialog<bool>(
+    final changed = await showInViewDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -171,7 +172,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
     required ValueChanged<String> setSelectedWorkKey,
   }) async {
     final controller = TextEditingController();
-    final title = await showDialog<String>(
+    final title = await showInViewDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('新建作品'),

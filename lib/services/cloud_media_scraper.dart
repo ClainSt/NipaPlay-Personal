@@ -2,6 +2,7 @@ import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_models.dart';
 import 'package:nipaplay/services/dandanplay_service.dart';
+import 'package:nipaplay/services/tmdb_metadata_service.dart';
 import 'package:path/path.dart' as p;
 
 class CloudMediaScrapeResult {
@@ -25,6 +26,7 @@ class CloudMediaScraper {
     }
     var matched = 0;
     var failed = 0;
+    final tmdbMetadata = TmdbMetadataService();
     for (final entry in works.entries) {
       final workKey = entry.key;
       final workAssets = entry.value;
@@ -52,14 +54,34 @@ class CloudMediaScraper {
         title: title,
       );
       if (tmdbType == 'movie') {
-        failed++;
+        if (await _scrapeTmdbFallback(
+          tmdbMetadata,
+          sourceId: sourceId,
+          workKey: workKey,
+          tmdbId: tmdbId,
+          type: tmdbType,
+        )) {
+          matched++;
+        } else {
+          failed++;
+        }
         continue;
       }
       try {
         final response = await DandanplayService.getBangumiByTmdbId(tmdbId);
         final bangumi = response?['bangumi'];
         if (response == null || bangumi is! Map<String, dynamic>) {
-          failed++;
+          if (await _scrapeTmdbFallback(
+            tmdbMetadata,
+            sourceId: sourceId,
+            workKey: workKey,
+            tmdbId: tmdbId,
+            type: tmdbType,
+          )) {
+            matched++;
+          } else {
+            failed++;
+          }
           continue;
         }
         final anime = BangumiAnime.fromDandanplayDetail(bangumi);
@@ -77,11 +99,41 @@ class CloudMediaScraper {
         );
         matched++;
       } catch (_) {
-        // Metadata failure does not discard the already indexed media assets.
-        failed++;
+        if (await _scrapeTmdbFallback(
+          tmdbMetadata,
+          sourceId: sourceId,
+          workKey: workKey,
+          tmdbId: tmdbId,
+          type: tmdbType,
+        )) {
+          matched++;
+        } else {
+          // Metadata failure does not discard the already indexed media assets.
+          failed++;
+        }
       }
     }
+    tmdbMetadata.close();
     return CloudMediaScrapeResult(matched: matched, failed: failed);
+  }
+
+  Future<bool> _scrapeTmdbFallback(
+    TmdbMetadataService service, {
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String type,
+  }) async {
+    try {
+      return await service.scrapeWork(
+        sourceId: sourceId,
+        workKey: workKey,
+        tmdbId: tmdbId,
+        type: type,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   String _fallbackTitle(

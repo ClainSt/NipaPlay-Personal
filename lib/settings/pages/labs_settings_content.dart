@@ -6,6 +6,7 @@ import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/settings/adaptive_settings_widgets.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/blur_dropdown.dart';
 import 'package:nipaplay/utils/globals.dart' as globals;
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:provider/provider.dart';
 
 class LabsSettingsContent extends StatelessWidget {
@@ -65,6 +66,16 @@ class LabsSettingsContent extends StatelessWidget {
                   ],
                   onChanged: labsSettings.setWebDavLibraryScrapeMode,
                 ),
+                AdaptiveSettingsTile.button(
+                  title: 'TMDB 元数据访问令牌',
+                  subtitle: labsSettings.tmdbReadAccessTokenConfigured
+                      ? '已保存在本机安全存储中，不会上传到媒体库同步空间'
+                      : '配置后可获取电影元数据；令牌仅保存在本机安全存储中',
+                  icon: Icons.key,
+                  phoneIcon: cupertino.CupertinoIcons.lock,
+                  trailingIcon: Ionicons.chevron_forward,
+                  onTap: () => _configureTmdbToken(context, labsSettings),
+                ),
                 AdaptiveSettingsTile.toggle(
                   title: '动画详情显示媒体分类',
                   subtitle: '开启后在动画详情页增加正片、特典、CDs 和 Scans 分类；关闭时保留原版详情页布局',
@@ -116,6 +127,72 @@ class LabsSettingsContent extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _configureTmdbToken(
+    BuildContext context,
+    LabsSettingsProvider labsSettings,
+  ) async {
+    final controller = TextEditingController();
+    try {
+      final value = await showInViewDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('TMDB 元数据访问令牌'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '在 TMDB 账户的 API 设置中创建 API Read Access Token。令牌只保存在此设备的安全存储中。',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'Bearer Token',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'This product uses the TMDB API but is not endorsed or certified by TMDB.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(''),
+              child: const Text('清除令牌'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+      if (value == null) return;
+      await labsSettings.setTmdbReadAccessToken(value);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+                  Text(value.trim().isEmpty ? '已清除 TMDB 令牌' : 'TMDB 令牌已安全保存')),
+        );
+      }
+    } finally {
+      controller.dispose();
+    }
   }
 
   String _text(

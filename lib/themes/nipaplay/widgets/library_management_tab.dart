@@ -60,6 +60,7 @@ import 'package:nipaplay/media_library/adaptive_library_management_overview.dart
 import 'package:nipaplay/media_library/unified_library_management_model.dart';
 import 'package:nipaplay/app/app_display_surface.dart';
 import 'package:nipaplay/app/app_display_surface_scope.dart';
+import 'package:nipaplay/widgets/in_view_dialog.dart';
 
 enum LibraryManagementSection { local, webdav, smb }
 
@@ -3024,7 +3025,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       }
 
       if (!mounted) return;
-      await showDialog<void>(
+      await showInViewDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text('云媒体索引（${catalogWorks.length} 部作品 · ${rows.length} 个文件）'),
@@ -3049,7 +3050,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 child: Card(
                                   clipBehavior: Clip.antiAlias,
                                   child: InkWell(
-                                    onTap: () => showDialog<void>(
+                                    onTap: () => showInViewDialog<void>(
                                       context: dialogContext,
                                       builder: (_) => CloudMediaWorkDialog(
                                         sourceId: selectedLibraryId,
@@ -3250,7 +3251,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             !(root['connection_id']?.toString().startsWith('local:') ?? false))
         .toList();
     if (!mounted) return;
-    await showDialog<void>(
+    await showInViewDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -3295,7 +3296,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                   ? Icons.link
                                   : Icons.link_off_outlined),
                               onPressed: () async {
-                                final confirmed = await showDialog<bool>(
+                                final confirmed = await showInViewDialog<bool>(
                                   context: dialogContext,
                                   builder: (confirmContext) => AlertDialog(
                                     title: const Text('映射媒体来源'),
@@ -3348,7 +3349,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                               tooltip: '删除本地索引',
                               icon: const Icon(Icons.delete_outline),
                               onPressed: () async {
-                                final confirmed = await showDialog<bool>(
+                                final confirmed = await showInViewDialog<bool>(
                                   context: dialogContext,
                                   builder: (confirmContext) => AlertDialog(
                                     title: const Text('删除媒体库索引？'),
