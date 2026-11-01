@@ -5,6 +5,7 @@ import 'package:nipaplay/models/watch_history_database.dart';
 import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/services/concurrent_video_processor.dart';
 import 'package:nipaplay/utils/storage_service.dart';
+import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,7 +35,7 @@ void main() {
     PathProviderPlatform.instance = _Paths(temp.path);
     StorageService.debugAppStorageDirectoryOverride = temp;
     db = await historyDatabase.database;
-    expect(db.path, File('${temp.path}/watch_history.db').path);
+    expect(db.path, p.join(temp.path, 'watch_history.db'));
   });
 
   tearDown(() async {

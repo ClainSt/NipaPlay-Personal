@@ -172,9 +172,19 @@ String? vobSubCompanionPath(String path, String extension) {
 }
 
 /// Bitmap .sub files are selected through their index; text .sub files stand alone.
-String canonicalSubtitlePath(String path) => isVobSubBinaryFile(path)
-    ? (vobSubCompanionPath(path, '.idx') ?? path)
-    : path;
+String canonicalSubtitlePath(String path) {
+  final selected = isVobSubBinaryFile(path)
+      ? (vobSubCompanionPath(path, '.idx') ?? path)
+      : path;
+  // Directory.listSync returns the host's canonical separator, while older
+  // settings may contain the other separator on Windows. Normalize every
+  // local subtitle path before it is used as a playback or persistence key.
+  final isWindowsDrivePath = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(selected);
+  if (!isWindowsDrivePath && (Uri.tryParse(selected)?.hasScheme ?? false)) {
+    return selected;
+  }
+  return p.normalize(selected);
+}
 
 /// Both VobSub members must exist. A MicroDVD text .sub needs no companion.
 bool isVobSubPairComplete(String subtitlePath) {

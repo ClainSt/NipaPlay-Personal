@@ -458,6 +458,15 @@ class SubtitleManager extends ChangeNotifier {
     return sha1.convert(utf8.encode(videoPath)).toString();
   }
 
+  String _subtitlePathIdentity(String value) {
+    final isWindowsDrivePath = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value);
+    if (!isWindowsDrivePath && (Uri.tryParse(value)?.hasScheme ?? false)) {
+      return value;
+    }
+    final normalized = p.normalize(value);
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
   Future<void> _subtitlePersistence = Future<void>.value();
 
   Future<void> _persistExternalSubtitleSelection({
@@ -514,8 +523,11 @@ class SubtitleManager extends ChangeNotifier {
         }
       }
 
-      final existingIndex =
-          subtitles.indexWhere((s) => s['path'] == subtitlePath);
+      final subtitleIdentity = _subtitlePathIdentity(subtitlePath);
+      final existingIndex = subtitles.indexWhere(
+        (s) => _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+            subtitleIdentity,
+      );
       final existing = existingIndex < 0
           ? <String, dynamic>{}
           : subtitles.removeAt(existingIndex);
@@ -553,14 +565,20 @@ class SubtitleManager extends ChangeNotifier {
         subtitles.insert(existingIndex, entry);
       }
       if (!registerOnly) {
+        final activeIdentities = activePaths.map(_subtitlePathIdentity).toSet();
         for (final item in subtitles) {
-          item['isActive'] = activePaths.contains(item['path']);
+          item['isActive'] = activeIdentities.contains(
+            _subtitlePathIdentity(item['path']?.toString() ?? ''),
+          );
         }
       }
       await prefs.setString(subtitlesKey, json.encode(subtitles));
       final lastActiveKey = 'last_active_subtitle_$videoHashKey';
       var activeIndex = subtitles
-          .indexWhere((s) => s['path'] == primaryPath && s['isActive'] == true);
+          .indexWhere((s) =>
+              _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+                  _subtitlePathIdentity(primaryPath ?? '') &&
+              s['isActive'] == true);
       if (activeIndex < 0)
         activeIndex = subtitles.indexWhere((s) => s['isActive'] == true);
       if (activeIndex >= 0) {
@@ -590,7 +608,9 @@ class SubtitleManager extends ChangeNotifier {
         final decoded = json.decode(raw);
         if (decoded is List) {
           for (final item in decoded) {
-            if (item is Map && item['path'] == subtitlePath) {
+            if (item is Map &&
+                _subtitlePathIdentity(item['path']?.toString() ?? '') ==
+                    _subtitlePathIdentity(subtitlePath)) {
               final name = item['name']?.toString();
               if (name != null && name.isNotEmpty) return name;
             }
