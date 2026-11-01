@@ -56,6 +56,9 @@ docs/error.txt
 /third_party/fvp/android/.cxx/
 /third_party/fvp/android/mdk-sdk/
 /third_party/fvp/android/mdk-sdk-android.7z
+/third_party/fvp/windows/mdk-sdk/
+/third_party/fvp/windows/mdk-sdk-windows-desktop-vs2022-x64.7z
+/.personal-signing/
 /rust/target
 /server/dandanplay-gateway/target/
 /node_modules/
