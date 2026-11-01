@@ -103,6 +103,64 @@ void main() {
     expect(asset['category'], 'extra');
     expect(asset['relation_locked'], 0);
 
+    await database.mapLibraryRoot(
+      libraryId: first,
+      connectionId: 'windows-webdav',
+      rootPath: '/Windows/Mounted/Anime',
+    );
+    final shared = await database.exportSyncRecords();
+    final sharedRoot = shared['root:$first']!;
+    expect(sharedRoot.containsKey('connection_id'), isFalse);
+    expect(sharedRoot.containsKey('root_path'), isFalse);
+    expect(sharedRoot.containsValue('/Windows/Mounted/Anime'), isFalse);
+
+    const androidSourceId = 'logical-cloud-source-1';
+    await database.applySyncRecord(
+      key: 'root:$androidSourceId',
+      value: {
+        'id': androidSourceId,
+        'name': 'Anime',
+        'created_at': DateTime.utc(2026).toIso8601String(),
+      },
+    );
+    final syncedAsset = <String, Object?>{
+      'source_id': androidSourceId,
+      'relative_path': 'Show/SPs/clip [01].mkv',
+      'work_key': manualWorkKey,
+      'name': 'clip [01].mkv',
+      'kind': 'video',
+      'category': 'extra',
+      'relation_locked': 1,
+    };
+    final syncKey = shared.keys.firstWhere((key) => key.startsWith('asset:'));
+    await database.applySyncRecord(
+      key: syncKey,
+      value: {...syncedAsset, 'source_id': first},
+    );
+    await database.applySyncRecord(
+      key: syncKey,
+      value: {
+        ...syncedAsset,
+        'source_id': first,
+        'work_key': 'Auto',
+        'category': 'episode'
+      },
+    );
+    final retainedLock = (await database.getAssets(sourceId: first))
+        .singleWhere((row) => row['relative_path'] == 'Show/SPs/clip [01].mkv');
+    expect(retainedLock['work_key'], manualWorkKey);
+    expect(retainedLock['category'], 'extra');
+    expect(retainedLock['relation_locked'], 1);
+
+    await database.mapLibraryRoot(
+      libraryId: androidSourceId,
+      connectionId: 'android-webdav',
+      rootPath: '/Android/Anime',
+    );
+    final mapped = await database.getLibraryRoot(androidSourceId);
+    expect(mapped?['connection_id'], 'android-webdav');
+    expect(mapped?['root_path'], '/Android/Anime');
+
     await database.deleteLibraryRoot(first);
     expect(await database.getLibraryRoot(first), isNull);
     expect(await database.getAssets(sourceId: first), isEmpty);

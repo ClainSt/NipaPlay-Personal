@@ -1433,8 +1433,10 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildSummaryView(BangumiAnime anime) {
-    final showCloudMediaSections =
-        context.watch<LabsSettingsProvider>().enableCloudAnimeDetailSections;
+    final showCloudMediaSections = context
+            .watch<LabsSettingsProvider?>()
+            ?.enableCloudAnimeDetailSections ??
+        false;
     final sharedSummary = _sharedSummary;
     final playbackDetail = _playbackDetailContext;
     final allowPlaybackOverrides =
@@ -3243,8 +3245,10 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildImmersiveActions(BangumiAnime anime) {
-    final showCloudMediaSections =
-        context.watch<LabsSettingsProvider>().enableCloudAnimeDetailSections;
+    final showCloudMediaSections = context
+            .watch<LabsSettingsProvider?>()
+            ?.enableCloudAnimeDetailSections ??
+        false;
     final episodes = anime.episodeList ?? const <EpisodeData>[];
     final resolved =
         episodes.isEmpty ? null : _resolveImmersivePrimary(episodes);

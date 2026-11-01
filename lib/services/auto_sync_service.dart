@@ -22,6 +22,7 @@ import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/dandanplay_remote_service.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/utils/auto_sync_settings.dart';
 
 enum AutoSyncPhase { idle, pulling, merging, pushing, complete, failed }
@@ -139,6 +140,19 @@ class AutoSyncService extends ChangeNotifier {
 
   Future<void> scheduleSyncAfterLocalChange() async {
     if (!await _shouldSyncOnRecordChange()) return;
+    _localChangeTimer?.cancel();
+    _localChangeTimer = Timer(_localChangeDebounce, () {
+      _localChangeTimer = null;
+      unawaited(_ignoreResult(_performSync()));
+    });
+  }
+
+  Future<void> scheduleSyncAfterCatalogChange() async {
+    if (!await AutoSyncSettings.isEnabled() ||
+        !(await AutoSyncSettings.getCategories())
+            .contains(BackupCategory.mediaLibraries)) {
+      return;
+    }
     _localChangeTimer?.cancel();
     _localChangeTimer = Timer(_localChangeDebounce, () {
       _localChangeTimer = null;
@@ -280,7 +294,6 @@ class AutoSyncService extends ChangeNotifier {
         await AnimeDeletionTombstones.activeTombstones();
     final localBackup = IncrementalSyncDataFilter.sanitizeBackup(
       collectedLocalBackup,
-      webDavConnectionTombstones: WebDAVService.instance.connectionTombstones,
       animeDeletionTombstones: animeDeletionTombstones,
     );
     final localState =
@@ -854,6 +867,15 @@ class AutoSyncService extends ChangeNotifier {
     if (operations.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     final database = WatchHistoryDatabase.instance;
+    for (final operation in operations.where((operation) =>
+        operation.category == BackupCategory.mediaLibraries.name &&
+        operation.key.startsWith('cloudMediaIndex:'))) {
+      final rawValue = operation.deleted ? null : operation.value;
+      await CloudMediaIndexDatabase.instance.applySyncRecord(
+        key: operation.key.substring('cloudMediaIndex:'.length),
+        value: rawValue is Map ? Map<String, Object?>.from(rawValue) : null,
+      );
+    }
     for (final operation
         in operations.where((operation) => operation.deleted)) {
       if (operation.category == BackupCategory.preferences.name) {
@@ -993,7 +1015,9 @@ class AutoSyncService extends ChangeNotifier {
               IncrementalSyncWebDavConnections.isTombstone(operation.value)) &&
           // 番剧删除墓碑不是观看记录，不能经 restoreFromData 恢复。
           !(operation.category == BackupCategory.watchHistory.name &&
-              AnimeDeletionTombstones.isDeletionKey(operation.key)),
+              AnimeDeletionTombstones.isDeletionKey(operation.key)) &&
+          !(operation.category == BackupCategory.mediaLibraries.name &&
+              operation.key.startsWith('cloudMediaIndex:')),
     )) {
       changedState.putIfAbsent(operation.category, () => {})[operation.key] =
           operation.value;

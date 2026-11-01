@@ -29,6 +29,7 @@ import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/webdav_service.dart'; // 导入WebDAV服务
 import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/auto_sync_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
@@ -3133,14 +3134,35 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                       final root = await database
                                           .getLibraryRoot(selectedLibraryId);
                                       final rootConnectionId =
-                                          root?['connection_id']?.toString() ??
-                                              connection.id;
+                                          root?['connection_id']?.toString();
+                                      final rootPath =
+                                          root?['root_path']?.toString();
+                                      if (rootConnectionId == null ||
+                                          rootConnectionId.isEmpty ||
+                                          rootPath == null ||
+                                          rootPath.isEmpty) {
+                                        if (mounted) {
+                                          BlurSnackBar.show(
+                                            context,
+                                            '请先在“管理云媒体库”中映射此媒体来源',
+                                          );
+                                        }
+                                        return;
+                                      }
                                       final sourceConnection = WebDAVService
-                                              .instance
-                                              .getConnectionByIdOrName(
-                                            rootConnectionId,
-                                          ) ??
-                                          connection;
+                                          .instance
+                                          .getConnectionByIdOrName(
+                                        rootConnectionId,
+                                      );
+                                      if (sourceConnection == null) {
+                                        if (mounted) {
+                                          BlurSnackBar.show(
+                                            context,
+                                            '当前设备未配置此媒体来源的 WebDAV 连接',
+                                          );
+                                        }
+                                        return;
+                                      }
                                       if (category == 'scan') {
                                         final images = rows
                                             .where((asset) =>
@@ -3171,9 +3193,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                             builder: (_) =>
                                                 CloudScansReaderPage(
                                               connection: sourceConnection,
-                                              rootPath: root?['root_path']
-                                                      ?.toString() ??
-                                                  _currentMountedPath,
+                                              rootPath: rootPath,
                                               images: images,
                                               initialIndex:
                                                   start < 0 ? 0 : start,
@@ -3181,9 +3201,6 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                           ),
                                         );
                                       } else {
-                                        final rootPath =
-                                            root?['root_path']?.toString() ??
-                                                _currentMountedPath;
                                         final relative =
                                             row['relative_path']?.toString() ??
                                                 '';
@@ -3228,7 +3245,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     final connection = _mountedLocation?.webdavConnection;
     if (connection == null) return;
     final database = CloudMediaIndexDatabase.instance;
-    final roots = await database.getLibraryRoots(connectionId: connection.id);
+    final roots = (await database.getLibraryRoots())
+        .where((root) =>
+            !(root['connection_id']?.toString().startsWith('local:') ?? false))
+        .toList();
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -3249,12 +3269,16 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                       final root = roots[index];
                       final id = root['id']?.toString() ?? '';
                       final rootPath = root['root_path']?.toString() ?? '/';
+                      final mappedConnectionId =
+                          root['connection_id']?.toString() ?? '';
+                      final isMapped = mappedConnectionId == connection.id &&
+                          rootPath.isNotEmpty;
                       final scanned = root['last_scanned_at']?.toString();
                       return ListTile(
                         leading: const Icon(Icons.folder_open_outlined),
                         title: Text(root['name']?.toString() ?? rootPath),
                         subtitle: Text(
-                          '$rootPath${scanned == null ? ' · 尚未完成扫描' : ' · 最近扫描 ${DateTime.tryParse(scanned)?.toLocal().toString().substring(0, 16) ?? scanned}'}',
+                          '${isMapped ? rootPath : '此设备尚未映射媒体来源'}${scanned == null ? ' · 尚未完成扫描' : ' · 最近扫描 ${DateTime.tryParse(scanned)?.toLocal().toString().substring(0, 16) ?? scanned}'}',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -3266,9 +3290,51 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                           spacing: 0,
                           children: [
                             IconButton(
+                              tooltip: '映射到当前 WebDAV 目录 $_currentMountedPath',
+                              icon: Icon(isMapped
+                                  ? Icons.link
+                                  : Icons.link_off_outlined),
+                              onPressed: () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: dialogContext,
+                                  builder: (confirmContext) => AlertDialog(
+                                    title: const Text('映射媒体来源'),
+                                    content: Text(
+                                      '将“${root['name']}”映射到本机连接“${connection.name}”的目录 $_currentMountedPath。此映射只保存在本机。',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(
+                                            confirmContext, false),
+                                        child: const Text('取消'),
+                                      ),
+                                      FilledButton(
+                                        onPressed: () =>
+                                            Navigator.pop(confirmContext, true),
+                                        child: const Text('映射'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true ||
+                                    !dialogContext.mounted) {
+                                  return;
+                                }
+                                await database.mapLibraryRoot(
+                                  libraryId: id,
+                                  connectionId: connection.id,
+                                  rootPath: _currentMountedPath,
+                                );
+                                setDialogState(() {
+                                  root['connection_id'] = connection.id;
+                                  root['root_path'] = _currentMountedPath;
+                                });
+                              },
+                            ),
+                            IconButton(
                               tooltip: '重新扫描并刮削',
                               icon: const Icon(Icons.refresh),
-                              onPressed: _isMountedDirectoryLoading
+                              onPressed: _isMountedDirectoryLoading || !isMapped
                                   ? null
                                   : () async {
                                       Navigator.of(dialogContext).pop();
@@ -3312,6 +3378,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                   return;
                                 }
                                 await database.deleteLibraryRoot(id);
+                                unawaited(AutoSyncService.instance
+                                    .scheduleSyncAfterCatalogChange());
                                 if (!dialogContext.mounted) return;
                                 setDialogState(() => roots.removeAt(index));
                               },

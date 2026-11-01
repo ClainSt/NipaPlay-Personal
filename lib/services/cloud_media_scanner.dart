@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
@@ -5,6 +6,7 @@ import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_scraper.dart';
 import 'package:nipaplay/services/cloud_media_models.dart';
+import 'package:nipaplay/services/auto_sync_service.dart';
 
 export 'package:nipaplay/services/cloud_media_models.dart';
 
@@ -201,6 +203,7 @@ class CloudMediaScanner {
       sourceId: libraryId,
       assets: result.assets,
     );
+    unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
     return result.copyWith(
       libraryId: libraryId,
       matchedWorks: scrapeResult.matched,

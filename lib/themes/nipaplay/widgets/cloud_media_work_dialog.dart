@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/auto_sync_service.dart';
 
 typedef CloudAssetOpenCallback = Future<void> Function(
   BuildContext context,
@@ -145,6 +148,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
       workKey: selectedWorkKey,
       category: selectedCategory,
     );
+    unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
     _reload();
   }
 
@@ -154,6 +158,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
       sourceId: widget.sourceId,
       relativePath: asset['relative_path']?.toString() ?? '',
     );
+    unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
     if (!mounted) return;
     if (undone) _reload();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -195,6 +200,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
       sourceId: widget.sourceId,
       title: title,
     );
+    unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
     if (!mounted) return;
     setState(() => _works.add({
           'work_key': workKey,

@@ -2,7 +2,6 @@ import 'package:nipaplay/services/anime_deletion_tombstones.dart';
 import 'package:nipaplay/services/backup_category.dart';
 import 'package:nipaplay/services/incremental_sync_repository.dart';
 import 'package:nipaplay/services/incremental_sync_webdav_connections.dart';
-import 'package:nipaplay/services/webdav_service.dart';
 
 /// Removes device-bound local media data from the cross-device repository.
 ///
@@ -14,27 +13,37 @@ class IncrementalSyncDataFilter {
 
   static Map<String, dynamic> sanitizeBackup(
     Map<String, dynamic> backup, {
-    Map<String, String> webDavConnectionTombstones = const {},
     Map<String, String> animeDeletionTombstones = const {},
   }) {
     final result = Map<String, dynamic>.from(backup);
+
+    final preferences = result[BackupCategory.preferences.name];
+    if (preferences is Map && preferences['settings'] is Map) {
+      final settings = Map<String, dynamic>.from(
+        preferences['settings'] as Map,
+      )..removeWhere((key, _) =>
+          key.startsWith('incremental_sync_') || key.startsWith('auto_sync_'));
+      result[BackupCategory.preferences.name] = {
+        ...Map<String, dynamic>.from(preferences),
+        'settings': settings,
+      };
+    }
 
     final mediaLibraries = backup[BackupCategory.mediaLibraries.name];
     final localLibraryRoots = _localLibraryRoots(mediaLibraries);
     if (mediaLibraries is Map) {
       final sanitizedMediaLibraries = Map<String, dynamic>.from(mediaLibraries)
-        ..remove('localMediaLibraries');
-      _normalizeWebDavConnections(
-        sanitizedMediaLibraries,
-        tombstones: webDavConnectionTombstones,
-      );
+        ..remove('localMediaLibraries')
+        ..remove('serverProfiles')
+        ..remove('smbConnections')
+        ..remove('dandanplayRemote')
+        ..remove('nipaplayShare');
+      _normalizeWebDavConnections(sanitizedMediaLibraries);
       result[BackupCategory.mediaLibraries.name] = sanitizedMediaLibraries;
     }
 
-    final deletedAnimeIds = animeDeletionTombstones.keys
-        .map(int.tryParse)
-        .whereType<int>()
-        .toSet();
+    final deletedAnimeIds =
+        animeDeletionTombstones.keys.map(int.tryParse).whereType<int>().toSet();
     for (final category in const [
       BackupCategory.watchHistory,
       BackupCategory.episodeMatches,
@@ -97,45 +106,14 @@ class IncrementalSyncDataFilter {
   }
 
   static void _normalizeWebDavConnections(
-    Map<String, dynamic> mediaLibraries, {
-    Map<String, String> tombstones = const {},
-  }) {
-    final rawConnections = mediaLibraries.remove('webdavConnections');
-    if (rawConnections is List) {
-      for (final rawConnection in rawConnections) {
-        if (rawConnection is! Map) continue;
-        final connection = WebDAVConnection.fromJson(
-          Map<String, dynamic>.from(rawConnection),
-        ).toJson()
-          ..remove('isConnected');
-        final id = connection['id']?.toString().trim();
-        if (id == null || id.isEmpty) continue;
-        mediaLibraries.putIfAbsent(
-          IncrementalSyncWebDavConnections.keyFor(id),
-          () => connection,
-        );
-      }
-    }
-
-    for (final key in mediaLibraries.keys
-        .where(IncrementalSyncWebDavConnections.isConnectionKey)
-        .toList(growable: false)) {
-      final value = mediaLibraries[key];
-      if (value is Map &&
-          !IncrementalSyncWebDavConnections.isTombstone(value)) {
-        mediaLibraries[key] = Map<String, dynamic>.from(value)
-          ..remove('isConnected');
-      }
-    }
-
-    for (final entry in tombstones.entries) {
-      final key = IncrementalSyncWebDavConnections.keyFor(entry.key);
-      if (mediaLibraries.containsKey(key)) continue;
-      mediaLibraries[key] = IncrementalSyncWebDavConnections.tombstone(
-        connectionId: entry.key,
-        deletedAt: entry.value,
-      );
-    }
+    Map<String, dynamic> mediaLibraries,
+  ) {
+    // WebDAV endpoints, usernames and passwords are device-local. The shared
+    // catalog sync uses logical source IDs and relative paths instead.
+    mediaLibraries.remove('webdavConnections');
+    mediaLibraries.removeWhere(
+      (key, _) => IncrementalSyncWebDavConnections.isConnectionKey(key),
+    );
   }
 
   static bool isDeviceLocalRecord(

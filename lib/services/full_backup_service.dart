@@ -16,6 +16,7 @@ import 'package:nipaplay/services/dandanplay_remote_service.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
 import 'package:nipaplay/services/incremental_sync_native_codec.dart';
 import 'package:nipaplay/services/backup_category.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/utils/auto_sync_settings.dart';
 import 'package:crypto/crypto.dart';
 
@@ -299,6 +300,15 @@ class FullBackupService {
     // 10. 番剧详情使用逐 animeId 记录，保证自定义背景等新增字段能被
     // 完整备份，并避免增量同步时不同番剧互相覆盖。
     result.addAll(await BangumiService.instance.exportAnimeDetailsForBackup());
+
+    // 11. Cloud catalog entities use logical source IDs and relative paths.
+    // The incremental sync sanitizer removes device-local WebDAV mappings.
+    final cloudRecords =
+        await CloudMediaIndexDatabase.instance.exportSyncRecords();
+    result['cloudMediaIndex'] = {
+      for (final entry in cloudRecords.entries)
+        'cloudMediaIndex:${entry.key}': entry.value,
+    };
 
     return result;
   }
@@ -712,6 +722,23 @@ class FullBackupService {
 
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      final rawCloudIndex = mediaLibrariesData['cloudMediaIndex'];
+      if (rawCloudIndex is Map) {
+        var restoredCloudRecords = 0;
+        for (final entry in rawCloudIndex.entries) {
+          final key = entry.key.toString();
+          if (!key.startsWith('cloudMediaIndex:')) continue;
+          await CloudMediaIndexDatabase.instance.applySyncRecord(
+            key: key.substring('cloudMediaIndex:'.length),
+            value: entry.value is Map
+                ? Map<String, Object?>.from(entry.value as Map)
+                : null,
+          );
+          restoredCloudRecords++;
+        }
+        result.restoredCount += restoredCloudRecords;
+      }
 
       // 1. 恢复本地媒体库路径
       final localLibs =

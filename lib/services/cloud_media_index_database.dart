@@ -285,6 +285,220 @@ class CloudMediaIndexDatabase {
     });
   }
 
+  /// Returns entity-level records for the incremental shared catalog sync.
+  /// Connection IDs and absolute root paths are deliberately excluded so a
+  /// receiving device must map each logical source to its own WebDAV target.
+  Future<Map<String, Map<String, Object?>>> exportSyncRecords() async {
+    final db = await database;
+    final result = <String, Map<String, Object?>>{};
+    final roots = await db.query('cloud_media_library_root');
+    final localOnlySourceIds = <String>{};
+    for (final row in roots) {
+      final id = row['id']?.toString();
+      if (id == null) continue;
+      if (row['connection_id']?.toString().startsWith('local:') == true) {
+        localOnlySourceIds.add(id);
+        continue;
+      }
+      result['root:$id'] = {
+        'id': id,
+        'name': row['name'],
+        'created_at': row['created_at'],
+      };
+    }
+    for (final row in await db.query('cloud_media_asset')) {
+      final sourceId = row['source_id']?.toString() ?? '';
+      if (localOnlySourceIds.contains(sourceId)) continue;
+      final relativePath = row['relative_path']?.toString() ?? '';
+      final key = base64Url.encode(utf8.encode('$sourceId\n$relativePath'));
+      result['asset:$key'] = Map<String, Object?>.from(row)
+        ..remove('last_seen_at');
+    }
+    for (final row in await db.query('cloud_media_work')) {
+      if (localOnlySourceIds.contains(row['source_id']?.toString())) continue;
+      final key = base64Url.encode(utf8.encode(
+        '${row['source_id']}\n${row['work_key']}',
+      ));
+      result['work:$key'] = Map<String, Object?>.from(row);
+    }
+    for (final row in await db.query('cloud_media_relation_history')) {
+      if (localOnlySourceIds.contains(row['source_id']?.toString())) continue;
+      final id = row['id']?.toString();
+      if (id != null) result['relation:$id'] = Map<String, Object?>.from(row);
+    }
+    return result;
+  }
+
+  /// Applies one idempotent entity operation received from the shared catalog.
+  Future<void> applySyncRecord({
+    required String key,
+    required Map<String, Object?>? value,
+  }) async {
+    final db = await database;
+    final deleted = value == null;
+    if (key.startsWith('root:')) {
+      final id = key.substring('root:'.length);
+      if (deleted) {
+        // Keep a mapped root while assets still reference it; its catalog rows
+        // are removed by their own explicit delete operations.
+        final assets = await db.query('cloud_media_asset',
+            columns: ['source_id'],
+            where: 'source_id = ?',
+            whereArgs: [id],
+            limit: 1);
+        if (assets.isEmpty) {
+          await db.delete('cloud_media_library_root',
+              where: 'id = ?', whereArgs: [id]);
+        }
+      } else {
+        await db.rawInsert('''
+          INSERT INTO cloud_media_library_root (id, connection_id, root_path, name, created_at)
+          VALUES (?, ?, '/', ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name
+        ''', [
+          id,
+          'unmapped:$id',
+          value['name'] ?? '媒体库',
+          value['created_at'] ?? DateTime.now().toUtc().toIso8601String()
+        ]);
+      }
+      return;
+    }
+    if (key.startsWith('asset:')) {
+      final encoded = key.substring('asset:'.length);
+      final decoded =
+          utf8.decode(base64Url.decode(base64Url.normalize(encoded)));
+      final parts = decoded.split('\n');
+      if (parts.length != 2) throw FormatException('无效的媒体资源同步键');
+      if (deleted) {
+        await db.delete('cloud_media_asset',
+            where: 'source_id = ? AND relative_path = ?', whereArgs: parts);
+      } else {
+        final sourceId = value['source_id']?.toString() ?? parts[0];
+        final relativePath = value['relative_path']?.toString() ?? parts[1];
+        await db.rawInsert('''
+          INSERT INTO cloud_media_asset
+            (source_id, relative_path, name, kind, category, episode_number,
+             work_key, size, modified_at, tmdb_id, tmdb_type, tmdb_tv_id,
+             tmdb_movie_id, tmdb_unknown_id, work_id, relation_locked, last_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(source_id, relative_path) DO UPDATE SET
+            name=excluded.name, kind=excluded.kind, size=excluded.size,
+            modified_at=excluded.modified_at,
+            tmdb_id=excluded.tmdb_id,
+            tmdb_type=CASE WHEN cloud_media_asset.relation_locked=1
+                           THEN cloud_media_asset.tmdb_type ELSE excluded.tmdb_type END,
+            tmdb_tv_id=COALESCE(cloud_media_asset.tmdb_tv_id, excluded.tmdb_tv_id),
+            tmdb_movie_id=COALESCE(cloud_media_asset.tmdb_movie_id, excluded.tmdb_movie_id),
+            tmdb_unknown_id=COALESCE(cloud_media_asset.tmdb_unknown_id, excluded.tmdb_unknown_id),
+            work_key=CASE WHEN cloud_media_asset.relation_locked=1
+                          THEN cloud_media_asset.work_key ELSE excluded.work_key END,
+            category=CASE WHEN cloud_media_asset.relation_locked=1
+                          THEN cloud_media_asset.category ELSE excluded.category END,
+            relation_locked=MAX(cloud_media_asset.relation_locked, excluded.relation_locked),
+            work_id=COALESCE(cloud_media_asset.work_id, excluded.work_id),
+            last_seen_at=excluded.last_seen_at
+        ''', [
+          sourceId,
+          relativePath,
+          value['name'] ?? '',
+          value['kind'] ?? 'video',
+          value['category'] ?? 'review',
+          value['episode_number'],
+          value['work_key'] ?? '.',
+          value['size'],
+          value['modified_at'],
+          value['tmdb_id'],
+          value['tmdb_type'] ?? 'unknown',
+          value['tmdb_tv_id'],
+          value['tmdb_movie_id'],
+          value['tmdb_unknown_id'],
+          value['work_id'],
+          value['relation_locked'] ?? 0,
+          DateTime.now().toUtc().toIso8601String(),
+        ]);
+      }
+      return;
+    }
+    if (key.startsWith('work:')) {
+      final encoded = key.substring('work:'.length);
+      final decoded =
+          utf8.decode(base64Url.decode(base64Url.normalize(encoded)));
+      final parts = decoded.split('\n');
+      if (parts.length != 2) throw FormatException('无效的作品同步键');
+      if (deleted) {
+        await db.delete('cloud_media_work',
+            where: 'source_id = ? AND work_key = ?', whereArgs: parts);
+      } else {
+        await db.rawInsert('''
+          INSERT INTO cloud_media_work
+            (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id, tmdb_movie_id,
+             tmdb_unknown_id, dandanplay_anime_id, bangumi_id, title, title_cn,
+             overview, poster_url, rating, metadata_json, metadata_status,
+             relation_locked, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(source_id, work_key) DO UPDATE SET
+            tmdb_id=excluded.tmdb_id, tmdb_type=excluded.tmdb_type,
+            tmdb_tv_id=excluded.tmdb_tv_id, tmdb_movie_id=excluded.tmdb_movie_id,
+            tmdb_unknown_id=excluded.tmdb_unknown_id,
+            dandanplay_anime_id=excluded.dandanplay_anime_id,
+            bangumi_id=excluded.bangumi_id, title=excluded.title,
+            title_cn=excluded.title_cn, overview=excluded.overview,
+            poster_url=excluded.poster_url, rating=excluded.rating,
+            metadata_json=excluded.metadata_json,
+            metadata_status=excluded.metadata_status,
+            relation_locked=MAX(cloud_media_work.relation_locked, excluded.relation_locked),
+            updated_at=excluded.updated_at
+        ''', [
+          value['source_id'] ?? parts[0],
+          value['work_key'] ?? parts[1],
+          value['tmdb_id'],
+          value['tmdb_type'] ?? 'unknown',
+          value['tmdb_tv_id'],
+          value['tmdb_movie_id'],
+          value['tmdb_unknown_id'],
+          value['dandanplay_anime_id'],
+          value['bangumi_id'],
+          value['title'] ?? '',
+          value['title_cn'] ?? '',
+          value['overview'],
+          value['poster_url'],
+          value['rating'],
+          value['metadata_json'],
+          value['metadata_status'] ?? 'pending',
+          value['relation_locked'] ?? 0,
+          value['updated_at'] ?? DateTime.now().toUtc().toIso8601String(),
+        ]);
+      }
+      return;
+    }
+    if (key.startsWith('relation:')) {
+      final id = key.substring('relation:'.length);
+      if (deleted) {
+        await db.delete('cloud_media_relation_history',
+            where: 'id = ?', whereArgs: [id]);
+      } else {
+        await db.insert('cloud_media_relation_history', value,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    }
+  }
+
+  Future<void> mapLibraryRoot({
+    required String libraryId,
+    required String connectionId,
+    required String rootPath,
+  }) async {
+    final db = await database;
+    final normalized = _normalizeRootPath(rootPath);
+    await db.update(
+      'cloud_media_library_root',
+      {'connection_id': connectionId, 'root_path': normalized},
+      where: 'id = ?',
+      whereArgs: [libraryId],
+    );
+  }
+
   String _normalizeRootPath(String path) {
     var normalized = path.trim().replaceAll('\\', '/');
     if (!normalized.startsWith('/')) normalized = '/$normalized';
