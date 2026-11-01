@@ -4,7 +4,7 @@
 
 1. 在 WebDAV 设置中添加本机可访问的连接；Windows 可使用 CloudDrive2 提供的 WebDAV 地址，Android 填写该设备能访问的地址。
 2. 打开媒体库管理，添加云媒体库，选择连接并浏览到要管理的目录。只会索引用户选择的根目录，不会改动云盘原始文件。
-3. 在「设置 → 实验室」分别控制「本地媒体库刮削模式」和「WebDAV 媒体库刮削模式」开关。每项互不影响：关闭使用 NipaPlay 原版流程，开启使用 TMDB-ID 模式，从目录名识别 TMDB ID；TMDB-ID 扫描只列目录和文件元数据，不读取视频正文。
+3. 在「设置 → 实验室」分别控制「本地媒体库刮削模式」和「WebDAV 媒体库刮削模式」开关。每项互不影响：关闭使用 NipaPlay 原版流程，开启使用 TMDB-ID 模式，从目录名识别 TMDB ID；TMDB-ID 扫描只列目录和文件元数据，不读取视频正文。本地扫描后可从「本地 TMDB 媒体库」打开海报墙，即使作品没有 Bangumi 关联也能查看已索引的 TMDB 元数据。
 4. 在同一页面打开「动画详情显示媒体分类」，作品详情页便会增加正片、特典、CDs 和 Scans 分类；关闭后使用原版详情页布局。文件归属/分类可在作品文件列表中人工修改并锁定；重扫会保留锁定关系。
 5. 若要抓取 TMDB 电影资料，在「设置 → 实验室 → TMDB 元数据访问令牌」粘贴 TMDB 账户 API 设置中的 Read Access Token。令牌保存于设备安全存储，不会同步；TV 条目优先使用弹弹play映射，未匹配时回退到 TMDB，Movie 直接使用 TMDB。
 
@@ -61,8 +61,8 @@ Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`�
 | 项目 | 结果 | 验证依据 |
 | --- | --- | --- |
 | 自动化测试 | 通过 | `flutter test --no-pub --reporter json`：1,516 项完成，37 项跳过，0 项失败；包含 WebDAV 请求拦截、媒体索引同步往返和人工关联冲突用例。 |
-| 本次改动静态分析 | 无错误 | `cloud_anime_detail_sections.dart` 单文件分析无问题；`library_management_tab.dart` 有 88 条该大型旧文件的 info/warning，未报告 error。 |
-| 全项目静态分析 | 未通过 | 当前完整分析报告 5,477 项，其中包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
+| 本次改动静态分析 | 无错误 | `cloud_anime_detail_sections.dart` 单文件分析无问题；`library_management_tab.dart` 有多条 info/warning，未报告 error。 |
+| 全项目静态分析 | 未通过 | 完整分析报告包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
 | Windows 发布构建 | 通过 | `scripts/package_personal_release.ps1 -Build` 完整执行成功；程序隐藏启动后保持运行 8 秒。 |
 | Android 发布构建 | 通过 | 同一打包脚本成功生成 arm64 APK；`apksigner` 验证 v2 签名，证书 SHA-256 为 `a083e7205dc014dbfd1a0b52f67a3f91a934ffe94b0f3d27ee268166570b4a9e`。 |
 | 真实设备与服务器 | 未验证 | 当前环境没有连接的 Android 设备，也未配置用户的 CloudDrive2/WebDAV 媒体目录；真实播放、阅读、跨设备网络同步需在目标设备上验收。 |
