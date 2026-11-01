@@ -199,7 +199,8 @@ void main() {
         ...syncedAsset,
         'source_id': first,
         'work_key': 'Auto',
-        'category': 'episode'
+        'category': 'episode',
+        'relation_locked': 0,
       },
     );
     final retainedLock = (await database.getAssets(sourceId: first))

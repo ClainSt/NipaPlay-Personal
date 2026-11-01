@@ -222,6 +222,39 @@ void main() {
     expect(mergedAsset['category'], 'extra');
     expect(mergedAsset['relation_locked'], 1);
     expect(await database.getWorks(sourceId: sourceId), hasLength(2));
+
+    final concurrentWorkKey = await database.createManualWork(
+      sourceId: sourceId,
+      title: 'Later manual edit on device A',
+    );
+    await database.updateAssetRelation(
+      sourceId: sourceId,
+      relativePath: 'Show/SPs/NCOP.mkv',
+      workKey: concurrentWorkKey,
+      category: 'extra',
+    );
+    await deviceARefresh.manualSync();
     deviceARefresh.dispose();
+
+    await database.close();
+    PathProviderPlatform.instance = _TestPaths(deviceB.path);
+    final deviceBConflictPull = AutoSyncService.forTesting(
+      transportFactory: ({
+        required serverUrl,
+        required username,
+        required password,
+      }) =>
+          transport,
+    );
+    await deviceBConflictPull.manualSync();
+    final conflictResolved =
+        (await database.getAssets(sourceId: sourceId)).single;
+    expect(conflictResolved['work_key'], concurrentWorkKey);
+    expect(conflictResolved['category'], 'extra');
+    expect(conflictResolved['relation_locked'], 1);
+    final relationHistory =
+        await (await database.database).query('cloud_media_relation_history');
+    expect(relationHistory, hasLength(2));
+    deviceBConflictPull.dispose();
   });
 }

@@ -152,8 +152,9 @@ class CloudMediaIndexDatabase {
             category=CASE WHEN cloud_media_asset.relation_locked=1
                           THEN cloud_media_asset.category ELSE excluded.category END,
             size=excluded.size, modified_at=excluded.modified_at,
-            tmdb_type=CASE WHEN cloud_media_asset.relation_locked=1
-                           THEN cloud_media_asset.tmdb_type ELSE excluded.tmdb_type END,
+            tmdb_type=CASE WHEN excluded.relation_locked=1
+                                 OR cloud_media_asset.relation_locked=0
+                           THEN excluded.tmdb_type ELSE cloud_media_asset.tmdb_type END,
             tmdb_unknown_id=COALESCE(cloud_media_asset.tmdb_unknown_id, excluded.tmdb_unknown_id),
             tmdb_tv_id=COALESCE(cloud_media_asset.tmdb_tv_id, excluded.tmdb_tv_id),
             tmdb_movie_id=COALESCE(cloud_media_asset.tmdb_movie_id, excluded.tmdb_movie_id),
@@ -419,7 +420,7 @@ class CloudMediaIndexDatabase {
       final decoded =
           utf8.decode(base64Url.decode(base64Url.normalize(encoded)));
       final parts = decoded.split('\n');
-      if (parts.length != 2) throw FormatException('无效的媒体资源同步键');
+      if (parts.length != 2) throw const FormatException('无效的媒体资源同步键');
       if (deleted) {
         await db.delete('cloud_media_asset',
             where: 'source_id = ? AND relative_path = ?', whereArgs: parts);
@@ -441,10 +442,12 @@ class CloudMediaIndexDatabase {
             tmdb_tv_id=COALESCE(cloud_media_asset.tmdb_tv_id, excluded.tmdb_tv_id),
             tmdb_movie_id=COALESCE(cloud_media_asset.tmdb_movie_id, excluded.tmdb_movie_id),
             tmdb_unknown_id=COALESCE(cloud_media_asset.tmdb_unknown_id, excluded.tmdb_unknown_id),
-            work_key=CASE WHEN cloud_media_asset.relation_locked=1
-                          THEN cloud_media_asset.work_key ELSE excluded.work_key END,
-            category=CASE WHEN cloud_media_asset.relation_locked=1
-                          THEN cloud_media_asset.category ELSE excluded.category END,
+            work_key=CASE WHEN excluded.relation_locked=1
+                                OR cloud_media_asset.relation_locked=0
+                          THEN excluded.work_key ELSE cloud_media_asset.work_key END,
+            category=CASE WHEN excluded.relation_locked=1
+                               OR cloud_media_asset.relation_locked=0
+                          THEN excluded.category ELSE cloud_media_asset.category END,
             relation_locked=MAX(cloud_media_asset.relation_locked, excluded.relation_locked),
             work_id=COALESCE(cloud_media_asset.work_id, excluded.work_id),
             last_seen_at=excluded.last_seen_at
@@ -475,7 +478,7 @@ class CloudMediaIndexDatabase {
       final decoded =
           utf8.decode(base64Url.decode(base64Url.normalize(encoded)));
       final parts = decoded.split('\n');
-      if (parts.length != 2) throw FormatException('无效的作品同步键');
+      if (parts.length != 2) throw const FormatException('无效的作品同步键');
       if (deleted) {
         await db.delete('cloud_media_work',
             where: 'source_id = ? AND work_key = ?', whereArgs: parts);

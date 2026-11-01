@@ -840,6 +840,17 @@ class AutoSyncService extends ChangeNotifier {
         // entities remain in the merged state for undo and conflict review.
         continue;
       }
+      if (_isManualCloudAssetRelation(remoteOperation) &&
+          _isManualCloudAssetRelation(operation) &&
+          !_localCloudAssetRelationWins(
+            key: operation.key,
+            localValue: operation.value,
+            remoteValue: remoteOperation.value,
+            local: local,
+            remote: remote,
+          )) {
+        continue;
+      }
       if (operation.category == BackupCategory.watchHistory.name &&
           !operation.deleted &&
           _localWatchRecordIsNewer(
@@ -863,6 +874,69 @@ class AutoSyncService extends ChangeNotifier {
       !operation.deleted &&
       operation.value is Map &&
       operation.value['relation_locked'] == 1;
+
+  bool _localCloudAssetRelationWins({
+    required String key,
+    required dynamic localValue,
+    required dynamic remoteValue,
+    required IncrementalSyncState local,
+    required IncrementalSyncState remote,
+  }) {
+    final encodedIdentity = key.substring('cloudMediaIndex:asset:'.length);
+    final identity = utf8.decode(
+      base64Url.decode(base64Url.normalize(encodedIdentity)),
+    );
+    final parts = identity.split('\n');
+    if (parts.length == 2) {
+      final changesById = <String, Map>{};
+      for (final state in [remote, local]) {
+        final records = state[BackupCategory.mediaLibraries.name] ?? const {};
+        for (final entry in records.entries.where(
+          (entry) => entry.key.startsWith('cloudMediaIndex:relation:'),
+        )) {
+          final value = entry.value;
+          if (value is Map &&
+              value['source_id']?.toString() == parts[0] &&
+              value['relative_path']?.toString() == parts[1]) {
+            changesById[entry.key] = value;
+          }
+        }
+      }
+      final relevantChanges = changesById.values.where((change) {
+        final undone = change['undone'];
+        return change['undone'] != true && undone != 1;
+      }).toList()
+        ..sort((a, b) {
+          final timeOrder = (a['created_at']?.toString() ?? '')
+              .compareTo(b['created_at']?.toString() ?? '');
+          if (timeOrder != 0) return timeOrder;
+          return (a['id']?.toString() ?? '')
+              .compareTo(b['id']?.toString() ?? '');
+        });
+      if (relevantChanges.isNotEmpty) {
+        final latest = relevantChanges.last;
+        final localMatches = _cloudRelationMatches(localValue, latest);
+        final remoteMatches = _cloudRelationMatches(remoteValue, latest);
+        if (localMatches != remoteMatches) return localMatches;
+      }
+    }
+
+    // Older records may have no relation history. Use a stable tie-break so
+    // two devices converge on the same locked relation instead of bouncing it.
+    final localSignature = _cloudRelationSignature(localValue);
+    final remoteSignature = _cloudRelationSignature(remoteValue);
+    return localSignature.compareTo(remoteSignature) <= 0;
+  }
+
+  bool _cloudRelationMatches(dynamic asset, Map change) =>
+      asset is Map &&
+      asset['work_key']?.toString() == change['after_work_key']?.toString() &&
+      asset['category']?.toString() == change['after_category']?.toString();
+
+  String _cloudRelationSignature(dynamic asset) {
+    if (asset is! Map) return '';
+    return '${asset['work_key'] ?? ''}\u0000${asset['category'] ?? ''}';
+  }
 
   bool _localWatchRecordIsNewer(dynamic local, dynamic remote) {
     if (local is! Map) return false;
