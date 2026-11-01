@@ -44,6 +44,7 @@ import 'package:nipaplay/themes/nipaplay/widgets/large_screen_page_scaffold.dart
 import 'package:nipaplay/themes/nipaplay/widgets/search_bar_action_button.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/smb_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_smb_connection_dialog.dart';
@@ -84,6 +85,18 @@ int _compareNaturalPath(String left, String right) {
       .toLowerCase()
       .substring(aOffset)
       .compareTo(right.toLowerCase().substring(bOffset));
+}
+
+String _joinCloudLibraryPath(String root, String relativePath) {
+  final normalizedRoot = root.replaceAll('\\', '/').replaceFirst(
+        RegExp(r'/+$'),
+        '',
+      );
+  final normalizedRelative =
+      relativePath.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
+  return normalizedRoot.isEmpty
+      ? '/$normalizedRelative'
+      : '$normalizedRoot/$normalizedRelative';
 }
 
 enum _MountedLibraryType { local, webdav, smb }
@@ -2923,12 +2936,82 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           ) ??
           connection.id;
       final rows = await database.getAssets(sourceId: selectedLibraryId);
-      final works = await database.getWorks(sourceId: selectedLibraryId);
+      final catalogWorks = await database.getWorks(sourceId: selectedLibraryId);
+      final works = [
+        ...catalogWorks,
+        if (rows.any((asset) => asset['work_key'] == '.'))
+          <String, Object?>{
+            'work_key': '.',
+            'title': '未关联文件',
+            'title_cn': '未关联文件',
+          },
+      ];
+      final libraryRoot = await database.getLibraryRoot(selectedLibraryId);
+      final rootPath =
+          libraryRoot?['root_path']?.toString() ?? _currentMountedPath;
+      final sourceConnection = WebDAVService.instance.getConnectionByIdOrName(
+            libraryRoot?['connection_id']?.toString() ?? connection.id,
+          ) ??
+          connection;
+
+      Future<void> openCloudAsset(
+        BuildContext assetContext,
+        Map<String, Object?> asset,
+      ) async {
+        final category = asset['category']?.toString();
+        final relative = asset['relative_path']?.toString() ?? '';
+        final fullPath = _joinCloudLibraryPath(rootPath, relative);
+        if (category == 'scan') {
+          final allAssets = await database.getAssets(
+            sourceId: selectedLibraryId,
+          );
+          final images = allAssets
+              .where((entry) =>
+                  entry['work_key'] == asset['work_key'] &&
+                  entry['category'] == 'scan' &&
+                  entry['kind'] == 'image')
+              .toList()
+            ..sort((a, b) => _compareNaturalPath(
+                  a['relative_path']?.toString() ?? '',
+                  b['relative_path']?.toString() ?? '',
+                ));
+          final selected = images.indexWhere(
+            (entry) => entry['relative_path'] == relative,
+          );
+          if (!assetContext.mounted || !mounted) return;
+          await Navigator.of(assetContext).push<void>(
+            MaterialPageRoute(
+              builder: (_) => CloudScansReaderPage(
+                connection: sourceConnection,
+                rootPath: rootPath,
+                images: images,
+                initialIndex: selected < 0 ? 0 : selected,
+              ),
+            ),
+          );
+          return;
+        }
+        final name = asset['name']?.toString() ?? '';
+        final modified = DateTime.tryParse(
+          asset['modified_at']?.toString() ?? '',
+        );
+        _playWebDAVFile(
+          sourceConnection,
+          WebDAVFile(
+            name: name,
+            path: fullPath,
+            isDirectory: false,
+            size: asset['size'] as int?,
+            lastModified: modified,
+          ),
+        );
+      }
+
       if (!mounted) return;
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('云媒体索引（${works.length} 部作品 · ${rows.length} 个文件）'),
+          title: Text('云媒体索引（${catalogWorks.length} 部作品 · ${rows.length} 个文件）'),
           content: SizedBox(
             width: 720,
             height: 520,
@@ -2949,36 +3032,47 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 width: 118,
                                 child: Card(
                                   clipBehavior: Clip.antiAlias,
-                                  child: Column(
-                                    children: [
-                                      Expanded(
-                                        child: poster?.startsWith('http') ==
-                                                true
-                                            ? Image.network(poster!,
-                                                fit: BoxFit.cover,
-                                                width: double.infinity,
-                                                errorBuilder: (_, __, ___) =>
-                                                    const Icon(
-                                                        Icons.movie_outlined))
-                                            : const Center(
-                                                child:
-                                                    Icon(Icons.movie_outlined)),
+                                  child: InkWell(
+                                    onTap: () => showDialog<void>(
+                                      context: dialogContext,
+                                      builder: (_) => CloudMediaWorkDialog(
+                                        sourceId: selectedLibraryId,
+                                        work: work,
+                                        works: catalogWorks,
+                                        onOpenAsset: openCloudAsset,
                                       ),
-                                      Padding(
-                                        padding: const EdgeInsets.all(4),
-                                        child: Text(
-                                          (work['title_cn']
-                                                          ?.toString()
-                                                          .isNotEmpty ==
-                                                      true
-                                                  ? work['title_cn']
-                                                  : work['title'])
-                                              .toString(),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Expanded(
+                                          child: poster?.startsWith('http') ==
+                                                  true
+                                              ? Image.network(poster!,
+                                                  fit: BoxFit.cover,
+                                                  width: double.infinity,
+                                                  errorBuilder: (_, __, ___) =>
+                                                      const Icon(
+                                                          Icons.movie_outlined))
+                                              : const Center(
+                                                  child: Icon(
+                                                      Icons.movie_outlined)),
                                         ),
-                                      ),
-                                    ],
+                                        Padding(
+                                          padding: const EdgeInsets.all(4),
+                                          child: Text(
+                                            (work['title_cn']
+                                                            ?.toString()
+                                                            .isNotEmpty ==
+                                                        true
+                                                    ? work['title_cn']
+                                                    : work['title'])
+                                                .toString(),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               );

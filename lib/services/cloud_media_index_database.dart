@@ -26,7 +26,7 @@ class CloudMediaIndexDatabase {
         '${support.path}${Platform.pathSeparator}cloud_media_library.db';
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, _) async {
         await db.execute('''
         CREATE TABLE cloud_media_asset (
@@ -60,6 +60,7 @@ class CloudMediaIndexDatabase {
         );
         await _createWorkTable(db);
         await _createLibraryRootTable(db);
+        await _createRelationHistoryTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createWorkTable(db);
@@ -88,6 +89,7 @@ class CloudMediaIndexDatabase {
           ''');
         }
         if (oldVersion < 4) await _createLibraryRootTable(db);
+        if (oldVersion < 5) await _createRelationHistoryTable(db);
       },
     );
   }
@@ -131,7 +133,8 @@ class CloudMediaIndexDatabase {
           ON CONFLICT(source_id, relative_path) DO UPDATE SET
             name=excluded.name, kind=excluded.kind,
             episode_number=excluded.episode_number,
-            work_key=excluded.work_key,
+            work_key=CASE WHEN cloud_media_asset.relation_locked=1
+                          THEN cloud_media_asset.work_key ELSE excluded.work_key END,
             category=CASE WHEN cloud_media_asset.relation_locked=1
                           THEN cloud_media_asset.category ELSE excluded.category END,
             size=excluded.size, modified_at=excluded.modified_at,
@@ -278,6 +281,22 @@ class CloudMediaIndexDatabase {
     )
   ''');
 
+  Future<void> _createRelationHistoryTable(DatabaseExecutor db) =>
+      db.execute('''
+    CREATE TABLE cloud_media_relation_history (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      before_work_key TEXT NOT NULL,
+      before_category TEXT NOT NULL,
+      before_locked INTEGER NOT NULL,
+      after_work_key TEXT NOT NULL,
+      after_category TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      undone INTEGER NOT NULL DEFAULT 0
+    )
+  ''');
+
   Future<List<Map<String, Object?>>> getAssets({
     String? sourceId,
     String? workKey,
@@ -299,6 +318,78 @@ class CloudMediaIndexDatabase {
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'relative_path COLLATE NOCASE',
     );
+  }
+
+  Future<void> updateAssetRelation({
+    required String sourceId,
+    required String relativePath,
+    required String workKey,
+    required String category,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'cloud_media_asset',
+        columns: ['work_key', 'category', 'relation_locked'],
+        where: 'source_id = ? AND relative_path = ?',
+        whereArgs: [sourceId, relativePath],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('媒体文件已不在索引中');
+      final before = rows.first;
+      await txn.insert('cloud_media_relation_history', {
+        'id': const Uuid().v4(),
+        'source_id': sourceId,
+        'relative_path': relativePath,
+        'before_work_key': before['work_key'],
+        'before_category': before['category'],
+        'before_locked': before['relation_locked'],
+        'after_work_key': workKey,
+        'after_category': category,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      await txn.update(
+        'cloud_media_asset',
+        {'work_key': workKey, 'category': category, 'relation_locked': 1},
+        where: 'source_id = ? AND relative_path = ?',
+        whereArgs: [sourceId, relativePath],
+      );
+    });
+  }
+
+  Future<bool> undoLastAssetRelationChange({
+    required String sourceId,
+    required String relativePath,
+  }) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final changes = await txn.query(
+        'cloud_media_relation_history',
+        where: 'source_id = ? AND relative_path = ? AND undone = 0',
+        whereArgs: [sourceId, relativePath],
+        orderBy: 'created_at DESC, rowid DESC',
+        limit: 1,
+      );
+      if (changes.isEmpty) return false;
+      final change = changes.first;
+      await txn.update(
+        'cloud_media_asset',
+        {
+          'work_key': change['before_work_key'],
+          'category': change['before_category'],
+          'relation_locked': change['before_locked'],
+        },
+        where: 'source_id = ? AND relative_path = ?',
+        whereArgs: [sourceId, relativePath],
+      );
+      await txn.update(
+        'cloud_media_relation_history',
+        {'undone': 1},
+        where: 'id = ?',
+        whereArgs: [change['id']],
+      );
+      return true;
+    });
   }
 
   Future<void> upsertWorkMetadata({
@@ -415,6 +506,27 @@ class CloudMediaIndexDatabase {
       title,
       DateTime.now().toUtc().toIso8601String(),
     ]);
+  }
+
+  Future<String> createManualWork({
+    required String sourceId,
+    required String title,
+  }) async {
+    final normalizedTitle = title.trim();
+    if (normalizedTitle.isEmpty) throw ArgumentError('作品名称不能为空');
+    final workKey = 'manual:${const Uuid().v4()}';
+    final db = await database;
+    await db.insert('cloud_media_work', {
+      'source_id': sourceId,
+      'work_key': workKey,
+      'tmdb_type': 'unknown',
+      'title': normalizedTitle,
+      'title_cn': normalizedTitle,
+      'metadata_status': 'manual',
+      'relation_locked': 1,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    return workKey;
   }
 
   Future<void> _ensureColumn(

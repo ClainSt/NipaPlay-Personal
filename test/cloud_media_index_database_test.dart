@@ -54,5 +54,53 @@ void main() {
     expect(
         (await database.getLibraryRoots(connectionId: 'device-connection-a')),
         hasLength(2));
+
+    await database.upsertAssets([
+      {
+        'source_id': first,
+        'relative_path': 'Show/SPs/clip [01].mkv',
+        'work_key': 'Show',
+        'name': 'clip [01].mkv',
+        'kind': 'video',
+        'category': 'extra',
+      },
+    ]);
+    const relativePath = 'Show/SPs/clip [01].mkv';
+    final manualWorkKey = await database.createManualWork(
+      sourceId: first,
+      title: 'Manually matched work',
+    );
+    await database.updateAssetRelation(
+      sourceId: first,
+      relativePath: relativePath,
+      workKey: manualWorkKey,
+      category: 'extra',
+    );
+    await database.upsertAssets([
+      {
+        'source_id': first,
+        'relative_path': relativePath,
+        'work_key': 'Show',
+        'name': 'clip [01].mkv',
+        'kind': 'video',
+        'category': 'episode',
+      },
+    ]);
+    var asset = (await database.getAssets(sourceId: first)).single;
+    expect(asset['work_key'], manualWorkKey);
+    expect(asset['category'], 'extra');
+    expect(asset['relation_locked'], 1);
+
+    expect(
+      await database.undoLastAssetRelationChange(
+        sourceId: first,
+        relativePath: relativePath,
+      ),
+      isTrue,
+    );
+    asset = (await database.getAssets(sourceId: first)).single;
+    expect(asset['work_key'], 'Show');
+    expect(asset['category'], 'extra');
+    expect(asset['relation_locked'], 0);
   });
 }
