@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 
 typedef CloudAnimeAssetOpenCallback = Future<void> Function(
   BuildContext context,
@@ -101,40 +102,65 @@ class _CloudAnimeWorkCard extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 8),
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Column(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  work['title_cn']?.toString().isNotEmpty == true
-                      ? work['title_cn'].toString()
-                      : work['title']?.toString() ?? '云媒体库作品',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    for (final entry in _labels.entries)
-                      Chip(label: Text('${entry.value} ${counts[entry.key]}')),
-                  ],
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: snapshot.connectionState != ConnectionState.done
-                        ? null
-                        : () => showInViewDialog<void>(
-                              context: context,
-                              builder: (_) => CloudMediaWorkDialog(
-                                sourceId: sourceId,
-                                work: work,
-                                works: allWorks,
-                                onOpenAsset: onOpenAsset,
-                              ),
+                if (work['poster_url']?.toString().isNotEmpty == true) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: CachedNetworkImageWidget(
+                      imageUrl: work['poster_url'].toString(),
+                      width: 72,
+                      height: 104,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 216,
+                      memCacheHeight: 312,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        work['title_cn']?.toString().isNotEmpty == true
+                            ? work['title_cn'].toString()
+                            : work['title']?.toString() ?? '云媒体库作品',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          for (final entry in _labels.entries)
+                            Chip(
+                              label:
+                                  Text('${entry.value} ${counts[entry.key]}'),
                             ),
-                    icon: const Icon(Icons.view_list_outlined),
-                    label: const Text('查看正片、特典、CDs 与 Scans'),
+                        ],
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed:
+                              snapshot.connectionState != ConnectionState.done
+                                  ? null
+                                  : () => showInViewDialog<void>(
+                                        context: context,
+                                        builder: (_) => CloudMediaWorkDialog(
+                                          sourceId: sourceId,
+                                          work: work,
+                                          works: allWorks,
+                                          onOpenAsset: onOpenAsset,
+                                        ),
+                                      ),
+                          icon: const Icon(Icons.view_list_outlined),
+                          label: const Text('查看正片、特典、CDs 与 Scans'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
