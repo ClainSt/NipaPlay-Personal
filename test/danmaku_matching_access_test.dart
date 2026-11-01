@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/utils/network_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,8 +57,7 @@ void main() {
 
     test('remote library scrapers separate stable and probe paths', () {
       final sources = [
-        File('lib/services/local_media_management_api.dart')
-            .readAsStringSync(),
+        File('lib/services/local_media_management_api.dart').readAsStringSync(),
         File('lib/themes/nipaplay/widgets/library_management_tab.dart')
             .readAsStringSync(),
       ];
@@ -109,7 +109,7 @@ void main() {
       }
 
       expect(
-        directMatchImplementations.map((path) => path.split('/').last).toSet(),
+        directMatchImplementations.map(p.basename).toSet(),
         {
           'dandanplay_service_io.dart',
           'dandanplay_service_stub.dart',

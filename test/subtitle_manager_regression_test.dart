@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nipaplay/player_abstraction/player_abstraction.dart';
 import 'package:nipaplay/utils/subtitle_manager.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _UnusedPlayerDelegate extends Fake implements AbstractPlayer {
@@ -117,7 +118,7 @@ void main() {
       ]);
 
       expect(manager.getAllActiveExternalSubtitlePaths(),
-          <String>[primary.path, secondary.path]);
+          <String>[p.normalize(primary.path), p.normalize(secondary.path)]);
     } finally {
       manager.dispose();
       await subtitleDir.delete(recursive: true);
@@ -177,7 +178,8 @@ void main() {
     test('attaching an app-rendered srt turns the embedded track off', () {
       expect(delegate.activeSubtitleTracks, [0]);
       manager.setExternalSubtitle(srt.path);
-      expect(manager.getAllActiveExternalSubtitlePaths(), [srt.path]);
+      expect(
+          manager.getAllActiveExternalSubtitlePaths(), [p.normalize(srt.path)]);
       expect(delegate.activeSubtitleTracks, isEmpty);
     });
 
@@ -207,17 +209,19 @@ void main() {
 
     test('a kernel-rendered external track keeps its existing behavior', () {
       manager.setExternalSubtitle(ass.path);
-      expect(manager.getAllActiveExternalSubtitlePaths(), [ass.path]);
+      expect(
+          manager.getAllActiveExternalSubtitlePaths(), [p.normalize(ass.path)]);
       expect(manager.externalSubtitleRenderedInApp(ass.path), isFalse);
-      expect(delegate.mediaSet, [ass.path]);
+      expect(delegate.mediaSet, [p.normalize(ass.path)]);
       expect(delegate.activeSubtitleTracks, [0]);
     });
 
-    test('stacking an srt keeps a kernel-rendered external track alive', () async {
+    test('stacking an srt keeps a kernel-rendered external track alive',
+        () async {
       manager.setExternalSubtitle(ass.path);
       await manager.addExternalSubtitleToStack(srt.path);
       expect(manager.getAllActiveExternalSubtitlePaths(),
-          containsAll(<String>[ass.path, srt.path]));
+          containsAll(<String>[p.normalize(ass.path), p.normalize(srt.path)]));
       expect(delegate.activeSubtitleTracks, [0]);
     });
   });

@@ -68,7 +68,7 @@ void main() {
     ).readAsStringSync();
     final monitor = File(
       'lib/utils/system_resource_monitor.dart',
-    ).readAsStringSync();
+    ).readAsStringSync().replaceAll('\r\n', '\n');
 
     expect(tvOSOverrides, isNot(contains('erika_flutter:')));
     expect(monitor, contains('_instance._updatePlayerKernelType();'));
@@ -87,16 +87,19 @@ void main() {
   test('tvOS hides unsupported desktop settings entries', () {
     final entries = File(
       'lib/settings/unified_settings_entries.dart',
-    ).readAsStringSync();
+    ).readAsStringSync().replaceAll('\r\n', '\n');
 
     expect(
-        entries,
-        contains('contentType: UnifiedSettingContentType.storage,'
-            '\n      visible: (context, surface) => !globals.isTelevision,'));
+      entries,
+      matches(RegExp(
+        r'contentType: UnifiedSettingContentType\.storage,\s*visible: \(context, surface\) => !globals\.isTelevision',
+      )),
+    );
     expect(
       entries,
-      contains('contentType: UnifiedSettingContentType.externalPlayer,'
-          '\n      visible: (context, surface) => !globals.isTelevision && !globals.isTablet,'),
+      matches(RegExp(
+        r'contentType: UnifiedSettingContentType\.externalPlayer,\s*visible: \(context, surface\) => !globals\.isTelevision && !globals\.isTablet',
+      )),
     );
     expect(
       entries,

@@ -279,7 +279,7 @@ class SubtitleManager extends ChangeNotifier {
 
   // 获取已缓存的字幕内容
   List<dynamic>? getCachedSubtitle(String path) {
-    return _subtitleCache[path];
+    return _subtitleCache[canonicalSubtitlePath(path)];
   }
 
   // 保存视频与字幕路径的映射
@@ -370,6 +370,7 @@ class SubtitleManager extends ChangeNotifier {
   // 异步预加载字幕文件
   Future<void> preloadSubtitleFile(String path) async {
     try {
+      path = canonicalSubtitlePath(path);
       final file = File(path);
       if (!await file.exists()) return;
       // 缓存指纹：文件大小+修改时间，字幕文件变化后强制重新解析
@@ -444,7 +445,8 @@ class SubtitleManager extends ChangeNotifier {
 
   // 设置当前外部字幕路径
   void setCurrentExternalSubtitlePath(String? path) {
-    _currentExternalSubtitlePath = path;
+    _currentExternalSubtitlePath =
+        path == null || path.isEmpty ? path : canonicalSubtitlePath(path);
     debugPrint('SubtitleManager: 设置当前外部字幕路径: $path');
   }
 
@@ -525,7 +527,8 @@ class SubtitleManager extends ChangeNotifier {
 
       final subtitleIdentity = _subtitlePathIdentity(subtitlePath);
       final existingIndex = subtitles.indexWhere(
-        (s) => _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+        (s) =>
+            _subtitlePathIdentity(s['path']?.toString() ?? '') ==
             subtitleIdentity,
       );
       final existing = existingIndex < 0
@@ -574,11 +577,10 @@ class SubtitleManager extends ChangeNotifier {
       }
       await prefs.setString(subtitlesKey, json.encode(subtitles));
       final lastActiveKey = 'last_active_subtitle_$videoHashKey';
-      var activeIndex = subtitles
-          .indexWhere((s) =>
-              _subtitlePathIdentity(s['path']?.toString() ?? '') ==
-                  _subtitlePathIdentity(primaryPath ?? '') &&
-              s['isActive'] == true);
+      var activeIndex = subtitles.indexWhere((s) =>
+          _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+              _subtitlePathIdentity(primaryPath ?? '') &&
+          s['isActive'] == true);
       if (activeIndex < 0)
         activeIndex = subtitles.indexWhere((s) => s['isActive'] == true);
       if (activeIndex >= 0) {
@@ -642,8 +644,7 @@ class SubtitleManager extends ChangeNotifier {
     // still be stopping: changing its subtitle tracks then can strand the
     // decoder and make fvp's next prepare wait for Stopped forever.
     final currentPath = _currentExternalSubtitlePath;
-    final hasNativeExternalSubtitle =
-        (currentPath != null &&
+    final hasNativeExternalSubtitle = (currentPath != null &&
             !_shouldRenderExternalSubtitleInApp(currentPath)) ||
         _activeExternalSubtitlePaths
             .any((path) => !_shouldRenderExternalSubtitleInApp(path));
@@ -1015,8 +1016,8 @@ class SubtitleManager extends ChangeNotifier {
     // 会同时出画面，所以挂载时先关掉内核的内嵌轨。叠加挂载时若内核正在渲染外挂
     // ASS/SSA（占 sid），则保持不动。
     final kernelExternalActive = keepKernelExternal &&
-        _activeExternalSubtitlePaths.any(
-            (other) => other != path && !_shouldRenderExternalSubtitleInApp(other));
+        _activeExternalSubtitlePaths.any((other) =>
+            other != path && !_shouldRenderExternalSubtitleInApp(other));
     if (!kernelExternalActive) {
       try {
         if (_player.activeSubtitleTracks.isNotEmpty) {
@@ -1098,6 +1099,7 @@ class SubtitleManager extends ChangeNotifier {
   }
 
   String _textAtPath(String path, int positionMs) {
+    path = canonicalSubtitlePath(path);
     if (!_shouldRenderExternalSubtitleInApp(path)) return '';
 
     final cachedEntries = _subtitleCache[path];

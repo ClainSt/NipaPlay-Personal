@@ -173,6 +173,7 @@ String? vobSubCompanionPath(String path, String extension) {
 
 /// Bitmap .sub files are selected through their index; text .sub files stand alone.
 String canonicalSubtitlePath(String path) {
+  if (path.isEmpty) return path;
   final selected = isVobSubBinaryFile(path)
       ? (vobSubCompanionPath(path, '.idx') ?? path)
       : path;

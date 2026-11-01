@@ -28,7 +28,7 @@ void main() {
   });
 
   test('HarmonyOS mode retains every shared dependency override', () {
-    final sharedKeys = _dependencyOverrideKeys(
+    final sharedKeys = _sharedCrossPlatformDependencyOverrideKeys(
       File('pubspec.yaml').readAsStringSync(),
     );
     final harmonyKeys = _dependencyOverrideKeys(
@@ -53,7 +53,7 @@ void main() {
   });
 
   test('Linux mode retains every shared dependency override', () {
-    final sharedKeys = _dependencyOverrideKeys(
+    final sharedKeys = _sharedCrossPlatformDependencyOverrideKeys(
       File('pubspec.yaml').readAsStringSync(),
     );
     final linuxKeys = _dependencyOverrideKeys(
@@ -65,7 +65,7 @@ void main() {
   });
 
   test('tvOS mode uses the shared hosted Erika package', () {
-    final sharedKeys = _dependencyOverrideKeys(
+    final sharedKeys = _sharedCrossPlatformDependencyOverrideKeys(
       File('pubspec.yaml').readAsStringSync(),
     );
     final tvOSOverrides = File(
@@ -308,7 +308,7 @@ Set<String> _dependencyOverrideKeys(String yaml) {
   final keys = <String>{};
   var insideOverrides = false;
 
-  for (final line in yaml.split('\n')) {
+  for (final line in yaml.replaceAll('\r\n', '\n').split('\n')) {
     if (line == 'dependency_overrides:') {
       insideOverrides = true;
       continue;
@@ -326,4 +326,12 @@ Set<String> _dependencyOverrideKeys(String yaml) {
   }
 
   return keys;
+}
+
+Set<String> _sharedCrossPlatformDependencyOverrideKeys(String yaml) {
+  // This fork is only needed to compile the Windows Credential Manager
+  // implementation; non-Windows profiles should resolve that federated
+  // implementation from the package graph instead of overriding it locally.
+  return _dependencyOverrideKeys(yaml)
+    ..remove('flutter_secure_storage_windows');
 }
