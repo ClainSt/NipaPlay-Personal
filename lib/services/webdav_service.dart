@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -379,8 +380,7 @@ class WebDAVService {
         return false;
       }
       // 内网可用则优先内网；仅公网可用时才优先公网。
-      _preferWanById[normalized.id] =
-          !result.lanSuccess && result.wanSuccess;
+      _preferWanById[normalized.id] = !result.lanSuccess && result.wanSuccess;
       final saved = result.connection.copyWith(isConnected: true);
       var index = _connections.indexWhere((item) => item.id == saved.id);
       if (index == -1) {
@@ -591,6 +591,17 @@ class WebDAVService {
       path,
       forceRefresh: forceRefresh,
     );
+  }
+
+  /// Reads one explicitly requested remote file. Cloud catalog scans must use
+  /// directory listings instead; this method is for playback and image viewing.
+  Future<Uint8List> readFileBytes(
+    WebDAVConnection connection,
+    String path,
+  ) async {
+    final client = _createClient(effectiveConnection(connection));
+    final bytes = await client.read(path);
+    return Uint8List.fromList(bytes);
   }
 
   Future<List<WebDAVFile>> _listDirectoryAllCached(
@@ -820,8 +831,7 @@ class WebDAVService {
     final result = await _validateAddresses(normalized);
     final isConnected = result.lanSuccess || result.wanSuccess;
     if (isConnected) {
-      _preferWanById[normalized.id] =
-          !result.lanSuccess && result.wanSuccess;
+      _preferWanById[normalized.id] = !result.lanSuccess && result.wanSuccess;
     }
     final updatedConnection =
         result.connection.copyWith(isConnected: isConnected);
@@ -2094,7 +2104,8 @@ class WebDAVService {
     required void Function(int) updateSearchedCount,
     required void Function(int) updateFoundCount,
   }) async {
-    final pending = ListQueue<MapEntry<String, int>>()..add(MapEntry(startPath, 0));
+    final pending = ListQueue<MapEntry<String, int>>()
+      ..add(MapEntry(startPath, 0));
     final visited = <String>{startPath};
     var inFlight = 0;
     var nextAllowedRequestAt = DateTime.now();
@@ -2129,9 +2140,8 @@ class WebDAVService {
           // 首个请求的槽就是当前时刻，无需等待。
           if (requestIntervalMs > 0) {
             final now = DateTime.now();
-            final slot = nextAllowedRequestAt.isAfter(now)
-                ? nextAllowedRequestAt
-                : now;
+            final slot =
+                nextAllowedRequestAt.isAfter(now) ? nextAllowedRequestAt : now;
             nextAllowedRequestAt =
                 slot.add(Duration(milliseconds: requestIntervalMs));
             final wait = slot.difference(now);
@@ -2168,7 +2178,9 @@ class WebDAVService {
             }
 
             // 目录入队（visited 去重，深度限制与旧串行版一致）
-            if (file.isDirectory && depth < depthLimit && visited.add(file.path)) {
+            if (file.isDirectory &&
+                depth < depthLimit &&
+                visited.add(file.path)) {
               pending.add(MapEntry(file.path, depth + 1));
             }
           }

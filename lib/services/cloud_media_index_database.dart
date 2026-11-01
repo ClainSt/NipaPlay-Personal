@@ -233,6 +233,17 @@ class CloudMediaIndexDatabase {
     );
   }
 
+  Future<Map<String, Object?>?> getLibraryRoot(String libraryId) async {
+    final db = await database;
+    final rows = await db.query(
+      'cloud_media_library_root',
+      where: 'id = ?',
+      whereArgs: [libraryId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<List<Map<String, Object?>>> getLibraryRoots({
     String? connectionId,
   }) async {

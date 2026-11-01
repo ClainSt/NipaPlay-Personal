@@ -43,6 +43,7 @@ import 'package:nipaplay/themes/nipaplay/widgets/large_screen_mode_scope.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/large_screen_page_scaffold.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/search_bar_action_button.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/webdav_connection_dialog.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/smb_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_smb_connection_dialog.dart';
@@ -58,6 +59,32 @@ import 'package:nipaplay/app/app_display_surface.dart';
 import 'package:nipaplay/app/app_display_surface_scope.dart';
 
 enum LibraryManagementSection { local, webdav, smb }
+
+int _compareNaturalPath(String left, String right) {
+  final chunks = RegExp(r'(\d+)');
+  final a = chunks.allMatches(left.toLowerCase()).toList();
+  final b = chunks.allMatches(right.toLowerCase()).toList();
+  var aOffset = 0;
+  var bOffset = 0;
+  for (var i = 0; i < min(a.length, b.length); i++) {
+    final aMatch = a[i];
+    final bMatch = b[i];
+    final textOrder = left
+        .toLowerCase()
+        .substring(aOffset, aMatch.start)
+        .compareTo(right.toLowerCase().substring(bOffset, bMatch.start));
+    if (textOrder != 0) return textOrder;
+    final numberOrder =
+        int.parse(aMatch.group(0)!).compareTo(int.parse(bMatch.group(0)!));
+    if (numberOrder != 0) return numberOrder;
+    aOffset = aMatch.end;
+    bOffset = bMatch.end;
+  }
+  return left
+      .toLowerCase()
+      .substring(aOffset)
+      .compareTo(right.toLowerCase().substring(bOffset));
+}
 
 enum _MountedLibraryType { local, webdav, smb }
 
@@ -116,14 +143,12 @@ List<LibraryManagementAddressLine> _smbAddressLines(
 
 /// 供仅支持单行文本的旧渲染路径使用的兜底文本（各地址换行、附连通性）。
 String _addressLinesFallback(List<LibraryManagementAddressLine> lines) {
-  return lines
-      .map((line) {
-        final status = libraryManagementAddressStatusText(line.status);
-        return status.isEmpty
-            ? '${line.label} ${line.address}'
-            : '${line.label} ${line.address}（$status）';
-      })
-      .join('\n');
+  return lines.map((line) {
+    final status = libraryManagementAddressStatusText(line.status);
+    return status.isEmpty
+        ? '${line.label} ${line.address}'
+        : '${line.label} ${line.address}（$status）';
+  }).join('\n');
 }
 
 String _webdavAddressLabel(WebDAVConnection connection) =>
@@ -315,7 +340,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     super.initState();
 
     // 启动阶段的可达性检测完成后刷新地址行的连通性状态。
-    MediaLibraryReachabilityService.instance.addListener(_onReachabilityUpdated);
+    MediaLibraryReachabilityService.instance
+        .addListener(_onReachabilityUpdated);
 
     // 延迟初始化，确保挂载完成
     if (widget.section == LibraryManagementSection.local) {
@@ -2872,7 +2898,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         rootPath: _currentMountedPath,
       );
       if (!mounted) return;
-      BlurSnackBar.show(context,
+      BlurSnackBar.show(
+          context,
           '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
           '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容');
       await _showCloudMediaIndex(libraryId: result.libraryId);
@@ -2925,15 +2952,25 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                   child: Column(
                                     children: [
                                       Expanded(
-                                        child: poster?.startsWith('http') == true
-                                            ? Image.network(poster!, fit: BoxFit.cover, width: double.infinity,
-                                                errorBuilder: (_, __, ___) => const Icon(Icons.movie_outlined))
-                                            : const Center(child: Icon(Icons.movie_outlined)),
+                                        child: poster?.startsWith('http') ==
+                                                true
+                                            ? Image.network(poster!,
+                                                fit: BoxFit.cover,
+                                                width: double.infinity,
+                                                errorBuilder: (_, __, ___) =>
+                                                    const Icon(
+                                                        Icons.movie_outlined))
+                                            : const Center(
+                                                child:
+                                                    Icon(Icons.movie_outlined)),
                                       ),
                                       Padding(
                                         padding: const EdgeInsets.all(4),
                                         child: Text(
-                                          (work['title_cn']?.toString().isNotEmpty == true
+                                          (work['title_cn']
+                                                          ?.toString()
+                                                          .isNotEmpty ==
+                                                      true
                                                   ? work['title_cn']
                                                   : work['title'])
                                               .toString(),
@@ -2959,8 +2996,18 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 row['tmdb_unknown_id'] ??
                                 row['tmdb_id'];
                             final episode = row['episode_number'];
+                            final category = row['category']?.toString();
+                            final kind = row['kind']?.toString();
+                            final canOpen =
+                                (category == 'scan' && kind == 'image') ||
+                                    (category == 'cd' && kind == 'audio');
                             return ListTile(
                               dense: true,
+                              leading: Icon(category == 'scan'
+                                  ? Icons.menu_book_outlined
+                                  : category == 'cd'
+                                      ? Icons.album_outlined
+                                      : Icons.movie_outlined),
                               title: Text(row['name']?.toString() ?? ''),
                               subtitle: Text(
                                 '${row['category']} · ${row['relative_path']}'
@@ -2969,6 +3016,85 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              trailing: canOpen
+                                  ? const Icon(Icons.play_arrow_rounded)
+                                  : null,
+                              onTap: canOpen
+                                  ? () async {
+                                      final root = await database
+                                          .getLibraryRoot(selectedLibraryId);
+                                      final rootConnectionId =
+                                          root?['connection_id']?.toString() ??
+                                              connection.id;
+                                      final sourceConnection = WebDAVService
+                                              .instance
+                                              .getConnectionByIdOrName(
+                                            rootConnectionId,
+                                          ) ??
+                                          connection;
+                                      if (category == 'scan') {
+                                        final images = rows
+                                            .where((asset) =>
+                                                asset['category'] == 'scan' &&
+                                                asset['kind'] == 'image')
+                                            .toList()
+                                          ..sort((a, b) => _compareNaturalPath(
+                                                a['relative_path']
+                                                        ?.toString() ??
+                                                    '',
+                                                b['relative_path']
+                                                        ?.toString() ??
+                                                    '',
+                                              ));
+                                        final selectedPath =
+                                            row['relative_path']?.toString();
+                                        final start = images.indexWhere(
+                                            (asset) =>
+                                                asset['relative_path'] ==
+                                                selectedPath);
+                                        if (!mounted ||
+                                            !dialogContext.mounted) {
+                                          return;
+                                        }
+                                        Navigator.of(dialogContext).pop();
+                                        await Navigator.of(context).push<void>(
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                CloudScansReaderPage(
+                                              connection: sourceConnection,
+                                              rootPath: root?['root_path']
+                                                      ?.toString() ??
+                                                  _currentMountedPath,
+                                              images: images,
+                                              initialIndex:
+                                                  start < 0 ? 0 : start,
+                                            ),
+                                          ),
+                                        );
+                                      } else {
+                                        final rootPath =
+                                            root?['root_path']?.toString() ??
+                                                _currentMountedPath;
+                                        final relative =
+                                            row['relative_path']?.toString() ??
+                                                '';
+                                        final fullPath =
+                                            '${rootPath.replaceAll(RegExp(r'/+$'), '')}/$relative';
+                                        final file = WebDAVFile(
+                                          name: row['name']?.toString() ?? '',
+                                          path: fullPath,
+                                          isDirectory: false,
+                                          size: row['size'] as int?,
+                                        );
+                                        if (!mounted ||
+                                            !dialogContext.mounted) {
+                                          return;
+                                        }
+                                        Navigator.of(dialogContext).pop();
+                                        _playWebDAVFile(sourceConnection, file);
+                                      }
+                                    }
+                                  : null,
                             );
                           },
                         ),
