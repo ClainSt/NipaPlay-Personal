@@ -55,3 +55,16 @@ Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`�
 ## 尚需真实环境验收
 
 模拟 WebDAV 测试可以验证扫描过程不读取视频内容；真实 CloudDrive2/WebDAV 网络行为、Android 真机播放/翻页、两台真实设备同步，以及不同安卓厂商的音频解码仍需在用户自己的设备和服务器上确认。本环境不能代替这些实测。
+
+## 本机验收记录（2026-11-02）
+
+| 项目 | 结果 | 验证依据 |
+| --- | --- | --- |
+| 自动化测试 | 通过 | `flutter test --no-pub --reporter json`：1,516 项完成，37 项跳过，0 项失败；包含 WebDAV 请求拦截、媒体索引同步往返和人工关联冲突用例。 |
+| 本次改动静态分析 | 通过 | `cloud_anime_detail_sections.dart` 单文件分析无问题。 |
+| 全项目静态分析 | 未通过 | 当前完整分析报告 5,477 项，其中包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
+| Windows 发布构建 | 通过 | `scripts/package_personal_release.ps1 -Build` 完整执行成功；程序隐藏启动后保持运行 8 秒。 |
+| Android 发布构建 | 通过 | 同一打包脚本成功生成 arm64 APK；`apksigner` 验证 v2 签名，证书 SHA-256 为 `a083e7205dc014dbfd1a0b52f67a3f91a934ffe94b0f3d27ee268166570b4a9e`。 |
+| 真实设备与服务器 | 未验证 | 当前环境没有连接的 Android 设备，也未配置用户的 CloudDrive2/WebDAV 媒体目录；真实播放、阅读、跨设备网络同步需在目标设备上验收。 |
+
+最新产物位于 `release/NipaPlay-Personal-Windows-Portable.zip` 和 `release/NipaPlay-Personal-Android.apk`。重新打包脚本会清理可能由测试残留的 Android 测试插件注册表，再为 release 重新生成，避免测试专用插件进入正式变体。

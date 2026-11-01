@@ -28,6 +28,15 @@ try {
     if ($Build) {
         & $Flutter build windows --release --no-pub
         if ($LASTEXITCODE -ne 0) { throw 'Windows Release build failed.' }
+
+        # flutter test can leave an ignored plugin registrant that includes the
+        # dev-only integration_test plugin. Recreate it for the Android release
+        # variant so javac does not try to link a test-only plugin into the APK.
+        $generatedPluginRegistrant = Join-Path $repo 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'
+        if (Test-Path $generatedPluginRegistrant) {
+            Remove-Item -LiteralPath $generatedPluginRegistrant -Force
+        }
+
         & $Flutter build apk --release --target-platform android-arm64 --no-pub
         if ($LASTEXITCODE -ne 0) { throw 'Android Release APK build failed.' }
     }
