@@ -72,6 +72,7 @@ class CloudMediaScanner {
             modified: entry.lastModified,
             kind: kind,
             tmdbId: parseTmdbId('$root/$directory'),
+            tmdbType: parseTmdbType('$root/$directory'),
             category: classifyAsset(directory, entry.name, kind),
             episodeNumber: episodeNumberFromName(entry.name),
           ),
@@ -110,6 +111,7 @@ class CloudMediaScanner {
               'size': asset.size,
               'modified_at': asset.modified?.toUtc().toIso8601String(),
               'tmdb_id': asset.tmdbId,
+              'tmdb_type': asset.tmdbType.name,
             },
           )
           .toList(),
@@ -138,6 +140,8 @@ class CloudMediaScanner {
 
   static int? parseTmdbId(String path) {
     final patterns = <RegExp>[
+      RegExp(r'\{\s*tmdbtv\s*[-=:]\s*(\d+)\s*\}', caseSensitive: false),
+      RegExp(r'\{\s*tmdbmovie\s*[-=:]\s*(\d+)\s*\}', caseSensitive: false),
       RegExp(r'\{\s*tmdb\s*[-=:]\s*(\d+)\s*\}', caseSensitive: false),
       RegExp(r'\{\s*tmdbid\s*[-=:]\s*(\d+)\s*\}', caseSensitive: false),
       RegExp(r'\[\s*tmdb\s*[-=:]\s*(\d+)\s*\]', caseSensitive: false),
@@ -152,6 +156,17 @@ class CloudMediaScanner {
       if (id != null && id > 0) return id;
     }
     return null;
+  }
+
+  static CloudTmdbType parseTmdbType(String path) {
+    final lower = path.toLowerCase();
+    if (RegExp(r'tmdbmovie\s*[-=:]|type\s*=\s*(movie|film)').hasMatch(lower)) {
+      return CloudTmdbType.movie;
+    }
+    if (RegExp(r'tmdbtv\s*[-=:]|type\s*=\s*tv').hasMatch(lower)) {
+      return CloudTmdbType.tv;
+    }
+    return CloudTmdbType.unknown;
   }
 
   static String classifyAsset(String directory, String name, String kind) {

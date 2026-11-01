@@ -25,7 +25,7 @@ class CloudMediaIndexDatabase {
         '${support.path}${Platform.pathSeparator}cloud_media_library.db';
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await db.execute('''
         CREATE TABLE cloud_media_asset (
@@ -39,6 +39,10 @@ class CloudMediaIndexDatabase {
           size INTEGER,
           modified_at TEXT,
           tmdb_id INTEGER,
+          tmdb_type TEXT NOT NULL DEFAULT 'unknown',
+          tmdb_tv_id INTEGER,
+          tmdb_movie_id INTEGER,
+          tmdb_unknown_id INTEGER,
           work_id TEXT,
           relation_locked INTEGER NOT NULL DEFAULT 0,
           last_seen_at TEXT NOT NULL,
@@ -57,6 +61,30 @@ class CloudMediaIndexDatabase {
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createWorkTable(db);
+        if (oldVersion < 3) {
+          await _ensureColumn(db, 'cloud_media_asset', 'tmdb_type',
+              "TEXT NOT NULL DEFAULT 'unknown'");
+          await _ensureColumn(db, 'cloud_media_asset', 'tmdb_tv_id', 'INTEGER');
+          await _ensureColumn(
+              db, 'cloud_media_asset', 'tmdb_movie_id', 'INTEGER');
+          await _ensureColumn(
+              db, 'cloud_media_asset', 'tmdb_unknown_id', 'INTEGER');
+          await _ensureColumn(db, 'cloud_media_work', 'tmdb_type',
+              "TEXT NOT NULL DEFAULT 'unknown'");
+          await _ensureColumn(db, 'cloud_media_work', 'tmdb_tv_id', 'INTEGER');
+          await _ensureColumn(
+              db, 'cloud_media_work', 'tmdb_movie_id', 'INTEGER');
+          await _ensureColumn(
+              db, 'cloud_media_work', 'tmdb_unknown_id', 'INTEGER');
+          await db.execute('''
+            UPDATE cloud_media_asset SET tmdb_unknown_id=tmdb_id
+            WHERE tmdb_id IS NOT NULL AND tmdb_unknown_id IS NULL
+          ''');
+          await db.execute('''
+            UPDATE cloud_media_work SET tmdb_unknown_id=tmdb_id
+            WHERE tmdb_id IS NOT NULL AND tmdb_unknown_id IS NULL
+          ''');
+        }
       },
     );
   }
@@ -66,6 +94,10 @@ class CloudMediaIndexDatabase {
       source_id TEXT NOT NULL,
       work_key TEXT NOT NULL,
       tmdb_id INTEGER,
+      tmdb_type TEXT NOT NULL DEFAULT 'unknown',
+      tmdb_tv_id INTEGER,
+      tmdb_movie_id INTEGER,
+      tmdb_unknown_id INTEGER,
       dandanplay_anime_id INTEGER,
       bangumi_id INTEGER,
       title TEXT NOT NULL,
@@ -90,8 +122,9 @@ class CloudMediaIndexDatabase {
           '''
           INSERT INTO cloud_media_asset
             (source_id, relative_path, name, kind, category, episode_number,
-             work_key, size, modified_at, tmdb_id, last_seen_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             work_key, size, modified_at, tmdb_id, tmdb_type, tmdb_unknown_id,
+             tmdb_tv_id, tmdb_movie_id, last_seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
           ON CONFLICT(source_id, relative_path) DO UPDATE SET
             name=excluded.name, kind=excluded.kind,
             episode_number=excluded.episode_number,
@@ -99,7 +132,11 @@ class CloudMediaIndexDatabase {
             category=CASE WHEN cloud_media_asset.relation_locked=1
                           THEN cloud_media_asset.category ELSE excluded.category END,
             size=excluded.size, modified_at=excluded.modified_at,
-            tmdb_id=COALESCE(cloud_media_asset.tmdb_id, excluded.tmdb_id),
+            tmdb_type=CASE WHEN cloud_media_asset.relation_locked=1
+                           THEN cloud_media_asset.tmdb_type ELSE excluded.tmdb_type END,
+            tmdb_unknown_id=COALESCE(cloud_media_asset.tmdb_unknown_id, excluded.tmdb_unknown_id),
+            tmdb_tv_id=COALESCE(cloud_media_asset.tmdb_tv_id, excluded.tmdb_tv_id),
+            tmdb_movie_id=COALESCE(cloud_media_asset.tmdb_movie_id, excluded.tmdb_movie_id),
             last_seen_at=excluded.last_seen_at
         ''',
           [
@@ -112,7 +149,12 @@ class CloudMediaIndexDatabase {
             asset['work_key'],
             asset['size'],
             asset['modified_at'],
-            asset['tmdb_id'],
+            asset['tmdb_type'] ?? 'unknown',
+            asset['tmdb_type'] == 'tv' ? asset['tmdb_id'] : null,
+            asset['tmdb_type'] == 'movie' ? asset['tmdb_id'] : null,
+            (asset['tmdb_type'] ?? 'unknown') == 'unknown'
+                ? asset['tmdb_id']
+                : null,
             now,
           ],
         );
@@ -147,6 +189,7 @@ class CloudMediaIndexDatabase {
     required String sourceId,
     required String workKey,
     required int tmdbId,
+    required String tmdbType,
     required Map<String, dynamic> response,
     required BangumiAnime anime,
   }) async {
@@ -154,13 +197,18 @@ class CloudMediaIndexDatabase {
     final bangumi = response['bangumi'];
     final rawAnimeId =
         bangumi is Map ? bangumi['animeId'] : response['animeId'];
-    await db.rawInsert('''
+    await db.transaction((txn) async {
+      await txn.rawInsert('''
       INSERT INTO cloud_media_work
-        (source_id, work_key, tmdb_id, dandanplay_anime_id, title, title_cn,
+        (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id, tmdb_movie_id,
+         tmdb_unknown_id, dandanplay_anime_id, title, title_cn,
          bangumi_id, overview, poster_url, rating, metadata_json, metadata_status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'matched', ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'matched', ?)
       ON CONFLICT(source_id, work_key) DO UPDATE SET
-        tmdb_id=excluded.tmdb_id,
+        tmdb_type=excluded.tmdb_type,
+        tmdb_tv_id=excluded.tmdb_tv_id,
+        tmdb_movie_id=excluded.tmdb_movie_id,
+        tmdb_unknown_id=excluded.tmdb_unknown_id,
         dandanplay_anime_id=excluded.dandanplay_anime_id,
         bangumi_id=excluded.bangumi_id,
         title=excluded.title, title_cn=excluded.title_cn,
@@ -168,22 +216,42 @@ class CloudMediaIndexDatabase {
         rating=excluded.rating, metadata_json=excluded.metadata_json,
         metadata_status='matched', updated_at=excluded.updated_at
       WHERE cloud_media_work.relation_locked=0
-    ''', [
-      sourceId,
-      workKey,
-      tmdbId,
-      int.tryParse(rawAnimeId?.toString() ?? ''),
-      anime.name,
-      anime.nameCn,
-      bangumi is Map<String, dynamic>
-          ? AnimeInfoParse.getBangumiTvId(bangumi)
-          : null,
-      anime.summary,
-      anime.imageUrl,
-      anime.rating,
-      jsonEncode(response),
-      DateTime.now().toUtc().toIso8601String(),
-    ]);
+      ''', [
+        sourceId,
+        workKey,
+        null,
+        'tv',
+        tmdbId,
+        null,
+        null,
+        int.tryParse(rawAnimeId?.toString() ?? ''),
+        anime.name,
+        anime.nameCn,
+        bangumi is Map<String, dynamic>
+            ? AnimeInfoParse.getBangumiTvId(bangumi)
+            : null,
+        anime.summary,
+        anime.imageUrl,
+        anime.rating,
+        jsonEncode(response),
+        DateTime.now().toUtc().toIso8601String(),
+      ]);
+      if (tmdbType == 'tv') {
+        await txn.update(
+          'cloud_media_asset',
+          {
+            'tmdb_type': 'tv',
+            'tmdb_tv_id': tmdbId,
+            'tmdb_unknown_id': null,
+          },
+          where: '''
+            source_id = ? AND work_key = ? AND relation_locked = 0
+            AND tmdb_unknown_id = ?
+          ''',
+          whereArgs: [sourceId, workKey, tmdbId],
+        );
+      }
+    });
   }
 
   Future<List<Map<String, Object?>>> getWorks({String? sourceId}) async {
@@ -200,15 +268,20 @@ class CloudMediaIndexDatabase {
     required String sourceId,
     required String workKey,
     required int tmdbId,
+    required String tmdbType,
     required String title,
   }) async {
     final db = await database;
     await db.rawInsert('''
       INSERT INTO cloud_media_work
-        (source_id, work_key, tmdb_id, title, title_cn, metadata_status, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id, tmdb_movie_id,
+         tmdb_unknown_id, title, title_cn, metadata_status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
       ON CONFLICT(source_id, work_key) DO UPDATE SET
-        tmdb_id=COALESCE(cloud_media_work.tmdb_id, excluded.tmdb_id),
+        tmdb_type=excluded.tmdb_type,
+        tmdb_tv_id=COALESCE(cloud_media_work.tmdb_tv_id, excluded.tmdb_tv_id),
+        tmdb_movie_id=COALESCE(cloud_media_work.tmdb_movie_id, excluded.tmdb_movie_id),
+        tmdb_unknown_id=COALESCE(cloud_media_work.tmdb_unknown_id, excluded.tmdb_unknown_id),
         title=CASE WHEN cloud_media_work.title='' THEN excluded.title ELSE cloud_media_work.title END,
         title_cn=CASE WHEN cloud_media_work.title_cn='' THEN excluded.title_cn ELSE cloud_media_work.title_cn END,
         metadata_status=CASE WHEN cloud_media_work.metadata_status='matched' THEN 'matched' ELSE 'pending' END,
@@ -217,10 +290,26 @@ class CloudMediaIndexDatabase {
     ''', [
       sourceId,
       workKey,
-      tmdbId,
+      null,
+      tmdbType,
+      tmdbType == 'tv' ? tmdbId : null,
+      tmdbType == 'movie' ? tmdbId : null,
+      tmdbType == 'unknown' ? tmdbId : null,
       title,
       title,
       DateTime.now().toUtc().toIso8601String(),
     ]);
+  }
+
+  Future<void> _ensureColumn(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    String declaration,
+  ) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    if (!columns.any((entry) => entry['name'] == column)) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $declaration');
+    }
   }
 }

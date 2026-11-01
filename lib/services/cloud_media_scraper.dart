@@ -17,19 +17,25 @@ class CloudMediaScraper {
     required String sourceId,
     required List<CloudMediaAsset> assets,
   }) async {
-    final works = <(String, int)>{
+    final works = <(String, int, String)>{
       for (final asset in assets)
-        if (asset.tmdbId != null) (asset.workKey, asset.tmdbId!),
+        if (asset.tmdbId != null)
+          (asset.workKey, asset.tmdbId!, asset.tmdbType.name),
     };
     var matched = 0;
     var failed = 0;
-    for (final (workKey, tmdbId) in works) {
+    for (final (workKey, tmdbId, tmdbType) in works) {
       await CloudMediaIndexDatabase.instance.upsertPendingWork(
         sourceId: sourceId,
         workKey: workKey,
         tmdbId: tmdbId,
+        tmdbType: tmdbType,
         title: _fallbackTitle(workKey, assets),
       );
+      if (tmdbType == 'movie') {
+        failed++;
+        continue;
+      }
       try {
         final response = await DandanplayService.getBangumiByTmdbId(tmdbId);
         final bangumi = response?['bangumi'];
@@ -46,6 +52,7 @@ class CloudMediaScraper {
           sourceId: sourceId,
           workKey: workKey,
           tmdbId: tmdbId,
+          tmdbType: 'tv',
           response: response,
           anime: anime,
         );

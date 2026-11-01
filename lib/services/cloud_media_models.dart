@@ -1,3 +1,5 @@
+enum CloudTmdbType { unknown, tv, movie }
+
 class CloudMediaScanResult {
   const CloudMediaScanResult({
     required this.rootPath,
@@ -31,6 +33,7 @@ class CloudMediaAsset {
     this.size,
     this.modified,
     this.tmdbId,
+    this.tmdbType = CloudTmdbType.unknown,
     this.episodeNumber,
   });
 
@@ -43,5 +46,6 @@ class CloudMediaAsset {
   final int? size;
   final DateTime? modified;
   final int? tmdbId;
+  final CloudTmdbType tmdbType;
   final int? episodeNumber;
 }

@@ -52,6 +52,7 @@ void main() {
       expect(webDav.listedPaths, ['/library', '/library/{tmdbid=100565}']);
       expect(result.assets, hasLength(1));
       expect(result.assets.single.tmdbId, 100565);
+      expect(result.assets.single.tmdbType, CloudTmdbType.unknown);
       expect(result.assets.single.episodeNumber, 1);
       expect(result.assets.single.relativePath,
           '{tmdbid=100565}/[VCB-Studio] Anime Title [01].mkv');
@@ -68,6 +69,26 @@ void main() {
       for (final sample in samples) {
         expect(CloudMediaScanner.parseTmdbId(sample), 100565, reason: sample);
       }
+      expect(
+        CloudMediaScanner.parseTmdbType('{[tmdbid=100565;type=tv]}'),
+        CloudTmdbType.tv,
+      );
+      expect(
+        CloudMediaScanner.parseTmdbType('{[tmdbid=100565;type=movie]}'),
+        CloudTmdbType.movie,
+      );
+      expect(
+        CloudMediaScanner.parseTmdbId('{tmdbtv-101}'),
+        101,
+      );
+      expect(
+        CloudMediaScanner.parseTmdbType('{tmdbmovie=202}'),
+        CloudTmdbType.movie,
+      );
+      expect(
+        CloudMediaScanner.parseTmdbType('{tmdbid=100565}'),
+        CloudTmdbType.unknown,
+      );
     });
 
     test('extracts common episode numbering without renaming', () {

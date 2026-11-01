@@ -2949,7 +2949,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                           separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final row = rows[index];
-                            final id = row['tmdb_id'];
+                            final id = row['tmdb_tv_id'] ??
+                                row['tmdb_movie_id'] ??
+                                row['tmdb_unknown_id'] ??
+                                row['tmdb_id'];
                             final episode = row['episode_number'];
                             return ListTile(
                               dense: true,
