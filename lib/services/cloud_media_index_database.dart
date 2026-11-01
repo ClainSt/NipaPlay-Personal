@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Private, app-local catalog database used by the cloud library feature.
@@ -19,9 +18,13 @@ class CloudMediaIndexDatabase {
       databaseFactory = databaseFactoryFfi;
     }
     final support = await getApplicationSupportDirectory();
-    final path = '${support.path}${Platform.pathSeparator}cloud_media_library.db';
-    return openDatabase(path, version: 1, onCreate: (db, _) async {
-      await db.execute('''
+    final path =
+        '${support.path}${Platform.pathSeparator}cloud_media_library.db';
+    return openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, _) async {
+        await db.execute('''
         CREATE TABLE cloud_media_asset (
           source_id TEXT NOT NULL,
           relative_path TEXT NOT NULL,
@@ -39,11 +42,16 @@ class CloudMediaIndexDatabase {
           PRIMARY KEY (source_id, relative_path)
         )
       ''');
-      await db.execute('CREATE INDEX cloud_media_asset_tmdb_id_index '
-          'ON cloud_media_asset(tmdb_id)');
-      await db.execute('CREATE INDEX cloud_media_asset_work_key_index '
-          'ON cloud_media_asset(source_id, work_key)');
-    });
+        await db.execute(
+          'CREATE INDEX cloud_media_asset_tmdb_id_index '
+          'ON cloud_media_asset(tmdb_id)',
+        );
+        await db.execute(
+          'CREATE INDEX cloud_media_asset_work_key_index '
+          'ON cloud_media_asset(source_id, work_key)',
+        );
+      },
+    );
   }
 
   Future<void> upsertAssets(List<Map<String, Object?>> assets) async {
@@ -51,7 +59,8 @@ class CloudMediaIndexDatabase {
     final now = DateTime.now().toUtc().toIso8601String();
     await db.transaction((txn) async {
       for (final asset in assets) {
-        await txn.rawInsert('''
+        await txn.rawInsert(
+          '''
           INSERT INTO cloud_media_asset
             (source_id, relative_path, name, kind, category, episode_number,
              work_key, size, modified_at, tmdb_id, last_seen_at)
@@ -65,12 +74,21 @@ class CloudMediaIndexDatabase {
             size=excluded.size, modified_at=excluded.modified_at,
             tmdb_id=COALESCE(cloud_media_asset.tmdb_id, excluded.tmdb_id),
             last_seen_at=excluded.last_seen_at
-        ''', [
-          asset['source_id'], asset['relative_path'], asset['name'],
-          asset['kind'], asset['category'], asset['episode_number'],
-          asset['work_key'], asset['size'], asset['modified_at'],
-          asset['tmdb_id'], now,
-        ]);
+        ''',
+          [
+            asset['source_id'],
+            asset['relative_path'],
+            asset['name'],
+            asset['kind'],
+            asset['category'],
+            asset['episode_number'],
+            asset['work_key'],
+            asset['size'],
+            asset['modified_at'],
+            asset['tmdb_id'],
+            now,
+          ],
+        );
       }
     });
   }
