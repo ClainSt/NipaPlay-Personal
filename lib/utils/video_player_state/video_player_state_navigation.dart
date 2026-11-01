@@ -131,9 +131,11 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
             historyItem: historyItem,
             detailContext: _playbackDetailContext,
           );
-          final selectionContext = _context ?? globals.navigatorKey.currentContext;
+          final selectionContext =
+              _context ?? globals.navigatorKey.currentContext;
           final selected = selectionContext?.mounted == true
-              ? await EpisodeFileSelectionService.select(selectionContext!, requested)
+              ? await EpisodeFileSelectionService.select(
+                  selectionContext!, requested)
               : requested;
           if (selected == null) return;
           final resolvedHistory = selected.historyItem ?? historyItem;
@@ -274,13 +276,18 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
           _playbackDetailContext?.sourceKey != detailContext.sourceKey) {
         return const PlaylistCurrentNotFound();
       }
+      final preferredKey = _currentMediaKey;
+      final hasPreferredKey = preferredKey != null &&
+          episodes.any((episode) => episode.mediaKey == preferredKey);
       final result = PlaybackPlaylist.locate(
         episodes,
-        currentMediaKey,
-        // The path is the source of truth. Cached episode media keys may have
-        // been produced before a remote connection/root migration.
-        identityOf: (episode) =>
-            MediaIdentityResolver.forPath(episode.videoPath),
+        hasPreferredKey ? preferredKey : currentMediaKey,
+        // Prefer logical track identities where a playlist intentionally has
+        // multiple CUE tracks backed by one audio file. Fall back to current
+        // paths for existing remote playlists after root/connection changes.
+        identityOf: (episode) => hasPreferredKey && episode.mediaKey != null
+            ? episode.mediaKey!
+            : MediaIdentityResolver.forPath(episode.videoPath),
       );
       if (result is PlaylistCurrentNotFound) {
         debugPrint(
@@ -355,8 +362,10 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
     // 优先查询数据库中的真实观看记录，因为 WebDAV/SMB 的 episodeLoader
     // 创建的占位 historyItem 中 animeName/episodeTitle 都是文件名，没有
     // animeId。数据库中有通过弹幕匹配写入的正确番剧/剧集名。
-    var historyItem =
-        await WatchHistoryManager.getHistoryItemByPath(episode.videoPath);
+    var historyItem = episode.mediaKey == null
+        ? await WatchHistoryManager.getHistoryItemByPath(episode.videoPath)
+        : await WatchHistoryManager.getHistoryByMediaKey(episode.mediaKey!);
+    historyItem = historyItem?.copyWith(filePath: episode.videoPath);
     final detailContext = _playbackDetailContext;
 
     // 播放列表中的本地文件项通常只保存路径。切集前补回媒体库中的匹配记录，
@@ -405,14 +414,18 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
       PlayableItem(
         videoPath: episode.videoPath,
         historyItem: historyItem,
-        animeId: historyItem?.animeId ?? episode.animeId ?? detailContext?.animeId,
+        animeId:
+            historyItem?.animeId ?? episode.animeId ?? detailContext?.animeId,
         episodeId: historyItem?.episodeId ?? episode.episodeId,
         actualPlayUrl: episode.actualPlayUrl,
         playbackSession: episode.playbackSession,
+        mediaKey: episode.mediaKey,
+        initialPositionMs: episode.startPositionMs,
       ),
     );
     if (selected == null) return;
-    if (!MediaIdentityResolver.samePath(selected.videoPath, episode.videoPath)) {
+    if (!MediaIdentityResolver.samePath(
+        selected.videoPath, episode.videoPath)) {
       await PlaybackService().play(selected, episodeFileSelectionHandled: true);
       return;
     }
@@ -465,14 +478,17 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
       historyItem: historyItem,
       actualPlayUrl: actualPlayUrl,
       playbackSession: playbackSession,
-      mediaKey: MediaIdentityResolver.forPath(episode.videoPath),
+      mediaKey:
+          episode.mediaKey ?? MediaIdentityResolver.forPath(episode.videoPath),
+      initialPositionMs: episode.startPositionMs,
       // 不传入旧的 detailContext，否则 PlaybackSourceService.resolve() 会
       // 直接复用上一集的上下文（subtitle 是上一集的剧集名），导致新一集显示旧标题。
     );
 
     // 与番剧详情页点击剧集使用同一个正式入口。该入口会完整传递
     // PlayableItem 的番剧/剧集元数据并统一解析播放来源。
-    await PlaybackService().play(playableItem, episodeFileSelectionHandled: true);
+    await PlaybackService()
+        .play(playableItem, episodeFileSelectionHandled: true);
   }
 
   Future<void> _playNextEpisodeUsingLegacyNavigation() async {
@@ -582,9 +598,11 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
             historyItem: historyItem,
             detailContext: _playbackDetailContext,
           );
-          final selectionContext = _context ?? globals.navigatorKey.currentContext;
+          final selectionContext =
+              _context ?? globals.navigatorKey.currentContext;
           final selected = selectionContext?.mounted == true
-              ? await EpisodeFileSelectionService.select(selectionContext!, requested)
+              ? await EpisodeFileSelectionService.select(
+                  selectionContext!, requested)
               : requested;
           if (selected == null) return;
           final resolvedHistory = selected.historyItem ?? historyItem;
@@ -1148,7 +1166,7 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
                 // 锚点距今超过 50ms，说明经历了 seek/暂停等中断，
                 // 重新锚定到当前 player.position，避免插值跳变
                 // [PTM-ANCHOR-EXPIRE-DIAG] 根因1辅助诊断：追踪锚点过期重锚定
-                // 假设：暂停后恢复，锚点过期  直接对齐到 playerMs 
+                // 假设：暂停后恢复，锚点过期  直接对齐到 playerMs
                 // 如果 playerMs < playbackTimeMs（player.position 回退），playbackTimeMs 回跳
                 if (!kReleaseMode) {
                   final prevPtm = _playbackTimeMs.value;
@@ -1446,9 +1464,8 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
             final remainingMs = playerDuration - playerPosition;
             // [MDK-EOF-GUARD] duration 无效（流媒体未就绪/为 0）时 remaining 恒为负，
             // 不能判定结束；且需连续 2 个采样（约 100ms）确认，防 position 尖刺误杀。
-            var reachedExactEnd = playerDuration > 0 &&
-                remainingMs >= 0 &&
-                remainingMs <= 100;
+            var reachedExactEnd =
+                playerDuration > 0 && remainingMs >= 0 && remainingMs <= 100;
             if (reachedExactEnd) {
               _exactEndStreak++;
               if (_exactEndStreak < 2) reachedExactEnd = false;
@@ -1480,7 +1497,8 @@ extension VideoPlayerStateNavigation on VideoPlayerState {
             }
 
             if (reachedExactEnd || reachedMdkStalledEnd) {
-              debugPrint('[Player] EOF 检测触发: kernel=${player.getPlayerKernelName()} '
+              debugPrint(
+                  '[Player] EOF 检测触发: kernel=${player.getPlayerKernelName()} '
                   'remaining=${remainingMs}ms exact=$reachedExactEnd '
                   'mdkStalled=$reachedMdkStalledEnd pos=$playerPosition '
                   'duration=$playerDuration');

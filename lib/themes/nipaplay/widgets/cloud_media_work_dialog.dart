@@ -283,11 +283,12 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
                             final category =
                                 asset['category']?.toString() ?? '';
                             final openable = const {
-                              'episode',
-                              'extra',
-                              'cd',
-                              'scan'
-                            }.contains(category);
+                                  'episode',
+                                  'extra',
+                                  'cd',
+                                  'scan'
+                                }.contains(category) ||
+                                asset['kind'] == 'cue';
                             return ListTile(
                               leading: Icon(_iconFor(asset)),
                               title: Text(asset['name']?.toString() ?? '',
@@ -343,6 +344,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
   }
 
   static IconData _iconFor(Map<String, Object?> asset) {
+    if (asset['kind'] == 'cue') return Icons.queue_music;
     switch (asset['category']) {
       case 'episode':
       case 'extra':

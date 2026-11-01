@@ -1,0 +1,56 @@
+# NipaPlay Personal 快速配置
+
+## WebDAV 媒体库
+
+1. 在 WebDAV 设置中添加本机可访问的连接；Windows 可使用 CloudDrive2 提供的 WebDAV 地址，Android 填写该设备能访问的地址。
+2. 打开媒体库管理，添加云媒体库，选择连接并浏览到要管理的目录。只会索引用户选择的根目录，不会改动云盘原始文件。
+3. 在「设置 → 实验室」分别选择本地库和 WebDAV 库的模式。TMDB-ID 模式从目录名识别 TMDB ID，扫描只列目录和文件元数据，不读取视频正文；Original 模式使用 NipaPlay 原有刮削流程。
+4. 详情页内容分类开关打开后可在作品页查看正片、特典、CDs 和 Scans。文件归属/分类可在作品文件列表中人工修改并锁定；重扫会保留锁定关系。
+
+## 跨设备同步
+
+1. 在同步设置中配置同一个可写 WebDAV 同步目录，并在设备上启用自动同步或手动同步。
+2. 先在负责扫描的设备添加并扫描媒体库。其他设备同步后会导入索引和作品关系，不会自动重新扫描媒体目录。
+3. 在其他设备的媒体库管理中为导入的媒体库选择本机 WebDAV 连接和对应目录。逻辑媒体来源 ID 与相对路径用于定位资源；连接地址和凭据保存在各设备本机。
+4. 文件还不能访问时仍可浏览已同步的目录和作品资料；开始播放或阅读时按提示配置本机来源。
+
+播放进度与作品关联通过现有增量同步传输。修改媒体库后可手动同步，避免等待低频后台同步。
+
+## CDs、CUE 与 Scans
+
+- 音频文件可从作品的 CDs 分类打开，使用 NipaPlay 原播放器的暂停、跳转和队列控制。
+- `.cue` 文件显示在 CDs 中；打开后选择曲目，应用读取所需的 CUE 文本并按 `INDEX 01` 跳到曲目起点。CUE 引用的音频必须已在同一索引库中。
+- Scans 支持 JPG/JPEG、PNG 和 WebP。阅读器按需读取当前图和相邻页缓存，工具栏切换单页/双页；Windows 支持左右方向键。
+
+## 备份与恢复
+
+在「设置 → 备份与恢复」创建 `.npb` 完整备份，选择包含「媒体库」和「观看历史」；在另一设备选择性恢复相同类别。恢复会合并数据，不会把设备专属连接凭据写入共享媒体库快照。恢复后仍需在本机配置 WebDAV 连接和目录映射。
+
+## 构建发行包
+
+项目要求 Flutter、Android SDK/NDK、Windows Visual Studio C++ 工具链及 Rust 工具链。执行：
+
+```powershell
+flutter test --no-pub
+flutter analyze
+.
+scripts\package_personal_release.ps1 -Flutter 'D:\path\to\flutter.bat' -Build
+```
+
+Windows 便携 ZIP 和 Android APK 会写入 `release/`。Android 使用本机 `android/key.properties` 与 `.personal-signing/NipaPlayPersonal.jks` 固定签名；二者均被 Git 忽略，密钥应安全离线备份，不要提交到仓库。未配置签名时 Gradle 会退回 debug 签名，不能用于覆盖已安装的个人正式版。
+
+Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`，与官方版分开。Android 包名为 `com.clainst.nipaplay.personal`，可与官方版并装。
+
+## 跟进官方稳定版
+
+仓库应保留 `upstream` 指向 AimesSoft 官方仓库、`origin` 指向个人 fork，且已启用 `git rerere`。工作区干净并位于 `personal/stable` 时运行：
+
+```powershell
+./scripts/update-upstream.ps1 -Version v1.11.12
+```
+
+脚本只创建 `upgrade/<版本>` 分支并合并指定的正式版本标签，不会推送，也不会自动覆盖稳定分支。解决冲突后完成测试、Windows/Android 构建和人工启动检查，再将升级分支合并回 `personal/stable`。
+
+## 尚需真实环境验收
+
+模拟 WebDAV 测试可以验证扫描过程不读取视频内容；真实 CloudDrive2/WebDAV 网络行为、Android 真机播放/翻页、两台真实设备同步，以及不同安卓厂商的音频解码仍需在用户自己的设备和服务器上确认。本环境不能代替这些实测。

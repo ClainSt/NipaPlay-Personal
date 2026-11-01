@@ -25,6 +25,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
     EmbyResolvedTrackBundle? embyTrackSelection,
     PlaybackDetailContext? playbackDetailContext,
     String? mediaKey,
+    int? initialPositionMs,
     bool resetManualDanmakuOffset = true,
     bool preserveEmbyAccountKey = false,
     bool manualMatchHandled = false,
@@ -50,6 +51,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
           playbackSession: playbackSession,
           detailContext: playbackDetailContext,
           mediaKey: mediaKey,
+          initialPositionMs: initialPositionMs,
         ),
         isCancelled: resolutionCancelled,
       );
@@ -71,6 +73,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
                   requestedPathBeforeSelection, selected.videoPath)
               ? mediaKey
               : null);
+      initialPositionMs = selected.initialPositionMs ?? initialPositionMs;
     }
     if (actualPlayUrl == null &&
         resolutionContext != null &&
@@ -856,9 +859,10 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
 
       // 获取上次播放位置
       final storedPosition = await _getVideoPosition(videoPath);
-      final lastPosition = storedPosition > 0
-          ? storedPosition
-          : (_initialHistoryItem?.lastPosition ?? 0);
+      final lastPosition = initialPositionMs ??
+          (storedPosition > 0
+              ? storedPosition
+              : (_initialHistoryItem?.lastPosition ?? 0));
       debugPrint(
         'VideoPlayerState: lastPosition for $videoPath = $lastPosition (raw value from _getVideoPosition)',
       );

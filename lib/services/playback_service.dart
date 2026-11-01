@@ -114,6 +114,7 @@ class PlaybackService {
       playbackSession: item.playbackSession,
       playbackDetailContext: detailContext,
       mediaKey: item.mediaKey,
+      initialPositionMs: item.initialPositionMs,
       episodeFileSelectionHandled: true,
     );
     return true;

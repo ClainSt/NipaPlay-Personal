@@ -46,6 +46,35 @@ class _FakeWebDavService extends WebDAVService {
   }
 }
 
+class _SeriesRootWebDavService extends WebDAVService {
+  _SeriesRootWebDavService() : super.forTesting();
+
+  @override
+  Future<List<WebDAVFile>> listDirectoryAll(
+    WebDAVConnection connection,
+    String path, {
+    bool forceRefresh = false,
+  }) async {
+    if (path == '/Series') {
+      return [
+        WebDAVFile(
+          name: 'Season 1',
+          path: '/Series/Season 1',
+          isDirectory: true,
+        ),
+      ];
+    }
+    return [
+      WebDAVFile(
+        name: 'Show S01E01.mkv',
+        path: '$path/Show S01E01.mkv',
+        isDirectory: false,
+        size: 500,
+      ),
+    ];
+  }
+}
+
 void main() {
   group('CloudMediaScanner filename metadata', () {
     test('recursive scan only enumerates WebDAV directories', () async {
@@ -70,6 +99,22 @@ void main() {
           '{tmdbid=100565}/[VCB-Studio] Anime Title [01].mkv');
       expect(webDav.requestedFileBytes, isEmpty,
           reason: 'catalog scans must not GET video content');
+    });
+
+    test('a selected series root keeps seasons under one work key', () async {
+      final scanner = CloudMediaScanner(webDav: _SeriesRootWebDavService());
+      final result = await scanner.scan(
+        connection: WebDAVConnection(
+          name: 'test',
+          url: 'https://example.invalid/dav',
+          username: '',
+          password: '',
+        ),
+        rootPath: '/Series',
+      );
+
+      expect(result.assets, hasLength(1));
+      expect(result.assets.single.workKey, '.');
     });
 
     test('recognizes supported TMDB folder markers', () {
@@ -124,6 +169,14 @@ void main() {
       );
       expect(
         CloudMediaScanner.classifyAsset(
+          '/Show/Season 1',
+          'NCOPED.mkv',
+          'video',
+        ),
+        'extra',
+      );
+      expect(
+        CloudMediaScanner.classifyAsset(
             '/Show/Season 1', 'Show [01].mkv', 'video'),
         'episode',
       );
@@ -133,6 +186,10 @@ void main() {
       );
       expect(
         CloudMediaScanner.classifyAsset('/Show/CDs', 'track.flac', 'audio'),
+        'cd',
+      );
+      expect(
+        CloudMediaScanner.classifyAsset('/Show/CDs', 'album.cue', 'cue'),
         'cd',
       );
     });

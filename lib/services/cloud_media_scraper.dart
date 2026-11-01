@@ -2,6 +2,7 @@ import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_models.dart';
 import 'package:nipaplay/services/dandanplay_service.dart';
+import 'package:path/path.dart' as p;
 
 class CloudMediaScrapeResult {
   const CloudMediaScrapeResult({required this.matched, required this.failed});
@@ -16,21 +17,39 @@ class CloudMediaScraper {
   Future<CloudMediaScrapeResult> scrape({
     required String sourceId,
     required List<CloudMediaAsset> assets,
+    String? rootPath,
   }) async {
-    final works = <(String, int, String)>{
-      for (final asset in assets)
-        if (asset.tmdbId != null)
-          (asset.workKey, asset.tmdbId!, asset.tmdbType.name),
-    };
+    final works = <String, List<CloudMediaAsset>>{};
+    for (final asset in assets) {
+      works.putIfAbsent(asset.workKey, () => <CloudMediaAsset>[]).add(asset);
+    }
     var matched = 0;
     var failed = 0;
-    for (final (workKey, tmdbId, tmdbType) in works) {
+    for (final entry in works.entries) {
+      final workKey = entry.key;
+      final workAssets = entry.value;
+      final identified = workAssets.where((asset) => asset.tmdbId != null);
+      final idAsset = identified.isEmpty ? null : identified.first;
+      final title = _fallbackTitle(workKey, workAssets, rootPath: rootPath);
+      if (idAsset == null) {
+        // Keep non-ID folders visible and editable instead of leaving their
+        // assets stranded outside the work catalog.
+        await CloudMediaIndexDatabase.instance.upsertUnmatchedWork(
+          sourceId: sourceId,
+          workKey: workKey,
+          title: title,
+        );
+        failed++;
+        continue;
+      }
+      final tmdbId = idAsset.tmdbId!;
+      final tmdbType = idAsset.tmdbType.name;
       await CloudMediaIndexDatabase.instance.upsertPendingWork(
         sourceId: sourceId,
         workKey: workKey,
         tmdbId: tmdbId,
         tmdbType: tmdbType,
-        title: _fallbackTitle(workKey, assets),
+        title: title,
       );
       if (tmdbType == 'movie') {
         failed++;
@@ -65,20 +84,32 @@ class CloudMediaScraper {
     return CloudMediaScrapeResult(matched: matched, failed: failed);
   }
 
-  String _fallbackTitle(String workKey, List<CloudMediaAsset> assets) {
+  String _fallbackTitle(
+    String workKey,
+    List<CloudMediaAsset> assets, {
+    String? rootPath,
+  }) {
+    var title = workKey;
     if (workKey != '.') {
-      return workKey
-          .replaceAll(
-            RegExp(r'\{\s*\[?\s*tmdb(?:id)?\s*[-=:].*?[\]}]',
-                caseSensitive: false),
+      title = workKey;
+    } else if (rootPath?.trim().isNotEmpty == true) {
+      final normalized = rootPath!.replaceAll('\\', '/').replaceFirst(
+            RegExp(r'/+$'),
             '',
-          )
-          .replaceAll(RegExp(r'[\[\]{}()]'), '')
-          .replaceAll(RegExp(r'[._]+'), ' ')
-          .trim();
+          );
+      title = normalized.split('/').last;
     }
+    title = title
+        .replaceAll(
+          RegExp(r'\{\s*\[?\s*tmdb(?:id|tv|movie)?\s*[-=:].*?[\]}]',
+              caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'[\[\]{}()]'), '')
+        .replaceAll(RegExp(r'[._]+'), ' ')
+        .trim();
+    if (title.isNotEmpty && title != '.') return title;
     final filename = assets.isEmpty ? 'Unknown title' : assets.first.name;
-    final extension = filename.lastIndexOf('.');
-    return extension < 0 ? filename : filename.substring(0, extension);
+    return p.basenameWithoutExtension(filename);
   }
 }

@@ -5,6 +5,7 @@
 .dart-tool/
 .packages
 build/
+/release/
 .flatpak-builder/
 # Generated locally from a platform dependency profile (HarmonyOS or Linux).
 /pubspec_overrides.yaml

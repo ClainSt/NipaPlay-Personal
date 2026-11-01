@@ -236,6 +236,42 @@ class CloudMediaIndexDatabase {
     );
   }
 
+  /// Prunes catalog rows that disappeared during a completed, successful
+  /// scan. Callers must never invoke this when remote enumeration failed.
+  Future<void> removeMissingAssets({
+    required String sourceId,
+    required Set<String> seenRelativePaths,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'cloud_media_asset',
+        columns: ['relative_path'],
+        where: 'source_id = ?',
+        whereArgs: [sourceId],
+      );
+      final missing = rows
+          .map((row) => row['relative_path']?.toString() ?? '')
+          .where((path) => !seenRelativePaths.contains(path))
+          .toList();
+      for (final path in missing) {
+        await txn.delete(
+          'cloud_media_asset',
+          where: 'source_id = ? AND relative_path = ?',
+          whereArgs: [sourceId, path],
+        );
+      }
+      await txn.rawDelete('''
+        DELETE FROM cloud_media_work
+        WHERE source_id = ? AND NOT EXISTS (
+          SELECT 1 FROM cloud_media_asset
+          WHERE cloud_media_asset.source_id = cloud_media_work.source_id
+            AND cloud_media_asset.work_key = cloud_media_work.work_key
+        )
+      ''', [sourceId]);
+    });
+  }
+
   Future<Map<String, Object?>?> getLibraryRoot(String libraryId) async {
     final db = await database;
     final rows = await db.query(
@@ -746,6 +782,27 @@ class CloudMediaIndexDatabase {
       title,
       DateTime.now().toUtc().toIso8601String(),
     ]);
+  }
+
+  Future<void> upsertUnmatchedWork({
+    required String sourceId,
+    required String workKey,
+    required String title,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.rawInsert('''
+      INSERT INTO cloud_media_work
+        (source_id, work_key, title, title_cn, tmdb_type,
+         metadata_status, updated_at)
+      VALUES (?, ?, ?, ?, 'unknown', 'pending', ?)
+      ON CONFLICT(source_id, work_key) DO UPDATE SET
+        title=CASE WHEN cloud_media_work.relation_locked=1
+                   THEN cloud_media_work.title ELSE excluded.title END,
+        title_cn=CASE WHEN cloud_media_work.relation_locked=1
+                      THEN cloud_media_work.title_cn ELSE excluded.title_cn END,
+        updated_at=excluded.updated_at
+    ''', [sourceId, workKey, title, title, now]);
   }
 
   Future<String> createManualWork({

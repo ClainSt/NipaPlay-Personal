@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:nipaplay/services/webdav_service.dart';
 
-/// Reads one scan image at a time from its configured WebDAV source.
+/// Reads scan images on demand and keeps a small adjacent-page cache.
 class CloudScansReaderPage extends StatefulWidget {
   const CloudScansReaderPage({
     super.key,
@@ -45,6 +45,9 @@ class _CloudScansReaderPageState extends State<CloudScansReaderPage> {
         : widget.initialIndex.clamp(0, widget.images.length - 1).toInt();
     _pageIndex = _doublePage ? initial ~/ 2 : initial;
     _pageController = PageController(initialPage: _pageIndex);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _warmAround(_pageIndex),
+    );
   }
 
   @override
@@ -54,7 +57,7 @@ class _CloudScansReaderPageState extends State<CloudScansReaderPage> {
   }
 
   Future<Uint8List> _bytesFor(int index) {
-    return _imageBytes.putIfAbsent(index, () async {
+    final future = _imageBytes.putIfAbsent(index, () async {
       final row = widget.images[index];
       final relativePath = row['relative_path']?.toString() ?? '';
       final root = widget.rootPath
@@ -73,6 +76,23 @@ class _CloudScansReaderPageState extends State<CloudScansReaderPage> {
       if (connection == null) throw StateError('未配置 WebDAV 媒体来源');
       return WebDAVService.instance.readFileBytes(connection, path);
     });
+    return future.catchError((Object error, StackTrace stackTrace) {
+      if (identical(_imageBytes[index], future)) _imageBytes.remove(index);
+      Error.throwWithStackTrace(error, stackTrace);
+    });
+  }
+
+  void _warmAround(int page) {
+    // Keep a small rolling window warm without retaining an entire book.
+    final first = _doublePage ? page * 2 : page;
+    for (final index in <int>[first - 1, first, first + 1, first + 2]) {
+      if (index >= 0 && index < widget.images.length) {
+        unawaited(_bytesFor(index).then<void>((_) {}, onError: (Object _) {}));
+      }
+    }
+    _imageBytes.removeWhere(
+      (index, _) => index < first - 2 || index > first + 3,
+    );
   }
 
   void _movePage(int delta) {
@@ -157,7 +177,10 @@ class _CloudScansReaderPageState extends State<CloudScansReaderPage> {
           key: ValueKey(_doublePage),
           controller: _pageController,
           itemCount: _pageCount,
-          onPageChanged: (index) => setState(() => _pageIndex = index),
+          onPageChanged: (index) {
+            setState(() => _pageIndex = index);
+            _warmAround(index);
+          },
           itemBuilder: (context, page) {
             final first = _doublePage ? page * 2 : page;
             if (!_doublePage || first + 1 >= widget.images.length) {

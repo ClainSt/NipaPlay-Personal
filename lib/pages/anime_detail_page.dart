@@ -1,5 +1,6 @@
 import 'package:nipaplay/themes/nipaplay/widgets/apple_native_media_control.dart';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -68,9 +69,13 @@ import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/media_library/adaptive_media_library_primitives.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_anime_detail_sections.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_cue_sheet_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
+import 'package:nipaplay/services/cue_sheet_parser.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/utils/webdav_file_sorter.dart';
 
 enum _EpisodeCleanupAction {
   clearMatchInfo,
@@ -1050,6 +1055,56 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
             ? '/$normalizedRelative'
             : '$normalizedRoot/$normalizedRelative';
 
+    if (asset['kind'] == 'cue') {
+      try {
+        final cueText = isLocalSource
+            ? await File(fullPath).readAsString()
+            : utf8.decode(await WebDAVService.instance
+                .readFileBytes(connection!, fullPath));
+        if (!assetContext.mounted) return;
+        final tracks = CueSheetParser.parse(cueText, cuePath: relativePath);
+        if (tracks.isEmpty) {
+          BlurSnackBar.show(assetContext, 'CUE 文件中没有可播放的音频曲目');
+          return;
+        }
+        final selectedTrack = await CloudCueSheetDialog.show(
+          context: assetContext,
+          title: asset['name']?.toString() ?? '选择 CUE 曲目',
+          tracks: tracks,
+        );
+        if (selectedTrack == null || !assetContext.mounted) return;
+        final assets = await CloudMediaIndexDatabase.instance
+            .getAssets(sourceId: sourceId);
+        if (!assetContext.mounted) return;
+        Map<String, Object?>? audio;
+        for (final candidate in assets) {
+          if (candidate['relative_path'] == selectedTrack.audioRelativePath &&
+              candidate['kind'] == 'audio') {
+            audio = candidate;
+            break;
+          }
+        }
+        if (audio == null) {
+          BlurSnackBar.show(
+            assetContext,
+            '找不到 CUE 指定的音频文件：${selectedTrack.audioRelativePath}',
+          );
+          return;
+        }
+        await _openCloudAnimeAsset(assetContext, {
+          ...audio,
+          'name':
+              '${selectedTrack.number.toString().padLeft(2, '0')} - ${selectedTrack.title}',
+          'cue_start_ms': selectedTrack.startPosition.inMilliseconds,
+          'cue_track_number': selectedTrack.number,
+          'cue_tracks': tracks,
+        });
+      } catch (error) {
+        if (!assetContext.mounted) return;
+        BlurSnackBar.show(assetContext, '读取 CUE 文件失败：$error');
+      }
+      return;
+    }
     if (asset['category'] == 'scan') {
       final images = (await CloudMediaIndexDatabase.instance
               .getAssets(sourceId: sourceId))
@@ -1058,9 +1113,12 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
               entry['category'] == 'scan' &&
               entry['kind'] == 'image')
           .toList()
-        ..sort((a, b) => (a['relative_path']?.toString() ?? '')
-            .toLowerCase()
-            .compareTo((b['relative_path']?.toString() ?? '').toLowerCase()));
+        ..sort(
+          (a, b) => WebDAVFileSorter.naturalCompare(
+            a['relative_path']?.toString() ?? '',
+            b['relative_path']?.toString() ?? '',
+          ),
+        );
       final initialIndex = images.indexWhere(
         (entry) => entry['relative_path'] == relativePath,
       );
@@ -1087,21 +1145,38 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final title =
         anime?.nameCn.isNotEmpty == true ? anime!.nameCn : anime?.name ?? '云媒体';
     final relativeIdentity = asset['relative_path']?.toString() ?? '';
+    final cueTrackNumber = asset['cue_track_number'] as int?;
+    final logicalIdentity = cueTrackNumber == null
+        ? relativeIdentity
+        : '$relativeIdentity#cue-track=$cueTrackNumber';
     final cloudMediaKey = MediaIdentity.remotePathKey(
       source: 'cloudmedia',
       connectionId: sourceId,
-      rawPath: relativeIdentity,
+      rawPath: logicalIdentity,
     );
     final previousHistory =
         await WatchHistoryManager.getHistoryByMediaKey(cloudMediaKey);
     if (!mounted || !assetContext.mounted) return;
+    final workKey = asset['work_key']?.toString() ?? '.';
+    final playbackContext = await CloudMediaPlaybackContextFactory.create(
+      currentAsset: asset,
+      sourceId: sourceId,
+      rootPath: rootPath,
+      normalizedRoot: normalizedRoot,
+      isLocalSource: isLocalSource,
+      connectionId: connection?.id,
+      workKey: workKey,
+      title: title,
+      animeId: widget.animeId,
+    );
     final history = WatchHistoryItem(
       filePath: filePath,
       animeName: title,
       episodeTitle: name,
       animeId: widget.animeId,
       duration: previousHistory?.duration ?? 0,
-      lastPosition: previousHistory?.lastPosition ?? 0,
+      lastPosition:
+          (asset['cue_start_ms'] as int?) ?? previousHistory?.lastPosition ?? 0,
       watchProgress: previousHistory?.watchProgress ?? 0,
       lastWatchTime: previousHistory?.lastWatchTime ?? DateTime.now(),
       mediaKey: cloudMediaKey,
@@ -1113,6 +1188,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       animeId: widget.animeId,
       historyItem: history,
       mediaKey: cloudMediaKey,
+      detailContext: playbackContext,
+      initialPositionMs: asset['cue_start_ms'] as int?,
     ));
     if (didStart) _dismissDetailIfNeeded();
   }

@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/cloud_media_models.dart';
+import 'package:nipaplay/services/cloud_media_scraper.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 class _TestPaths extends PathProviderPlatform {
@@ -54,6 +56,60 @@ void main() {
     expect(
         (await database.getLibraryRoots(connectionId: 'device-connection-a')),
         hasLength(2));
+
+    final scrapeResult = await CloudMediaScraper().scrape(
+      sourceId: second,
+      rootPath: '/Anime/Series Root',
+      assets: const [
+        CloudMediaAsset(
+          sourceId: 'unused',
+          relativePath: 'Season 1/episode.mkv',
+          workKey: '.',
+          name: 'episode.mkv',
+          kind: 'video',
+          category: 'episode',
+        ),
+      ],
+    );
+    expect(scrapeResult.matched, 0);
+    expect(scrapeResult.failed, 1);
+    expect((await database.getWorks(sourceId: second)).single['title'],
+        'Series Root');
+    await database.upsertAssets([
+      {
+        'source_id': second,
+        'relative_path': 'Season 1/episode.mkv',
+        'work_key': '.',
+        'name': 'episode.mkv',
+        'kind': 'video',
+        'category': 'episode',
+      },
+      {
+        'source_id': second,
+        'relative_path': 'Season 1/removed.mkv',
+        'work_key': '.',
+        'name': 'removed.mkv',
+        'kind': 'video',
+        'category': 'episode',
+      },
+    ]);
+    await database.removeMissingAssets(
+      sourceId: second,
+      seenRelativePaths: {'Season 1/episode.mkv'},
+    );
+    expect(
+        (await database.getAssets(sourceId: second)).map(
+          (row) => row['relative_path'],
+        ),
+        ['Season 1/episode.mkv']);
+    expect((await database.getWorks(sourceId: second)).single['title'],
+        'Series Root');
+    await database.removeMissingAssets(
+      sourceId: second,
+      seenRelativePaths: const {},
+    );
+    expect(await database.getAssets(sourceId: second), isEmpty);
+    expect(await database.getWorks(sourceId: second), isEmpty);
 
     await database.upsertAssets([
       {

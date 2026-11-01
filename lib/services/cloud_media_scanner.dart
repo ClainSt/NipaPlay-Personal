@@ -198,9 +198,15 @@ class CloudMediaScanner {
           )
           .toList(),
     );
+    await database.removeMissingAssets(
+      sourceId: libraryId,
+      seenRelativePaths:
+          result.assets.map((asset) => asset.relativePath).toSet(),
+    );
     await database.markLibraryRootScanned(libraryId);
     final scrapeResult = await CloudMediaScraper().scrape(
       sourceId: libraryId,
+      rootPath: result.rootPath,
       assets: result.assets,
     );
     unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
@@ -269,14 +275,14 @@ class CloudMediaScanner {
     )) {
       return 'extra';
     }
-    if (kind == 'audio') {
+    if (kind == 'audio' || kind == 'cue') {
       return 'cd';
     }
     if (kind == 'image') {
       return 'scan';
     }
     if (RegExp(
-      r'(^|[^a-z])(ncop|nced|pv|cm|ova|oad|sp|mv|visual commentary)([^a-z]|$)',
+      r'(^|[^a-z])(ncoped|ncop|nced|pv|cm|ova|oad|sp|mv|visual commentary)([^a-z]|$)',
       caseSensitive: false,
     ).hasMatch(lower)) {
       return 'extra';
@@ -308,7 +314,16 @@ class CloudMediaScanner {
   static String _workKey(String root, String directory) {
     final relativeDirectory = _relativeToRoot(root, directory);
     if (relativeDirectory.isEmpty) return '.';
-    return relativeDirectory.split('/').first;
+    final firstSegment = relativeDirectory.split('/').first;
+    // When a user chooses the series folder itself as the library root, a
+    // season/special subdirectory is still part of that root work.
+    if (RegExp(
+      r'^(?:s\d{1,2}|season\s*\d{1,2}|sp|sps|specials|extras|cds|ost|scans|booklet)$',
+      caseSensitive: false,
+    ).hasMatch(firstSegment.trim())) {
+      return '.';
+    }
+    return firstSegment;
   }
 
   static String _normalize(String path) {
