@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart' as cupertino;
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:nipaplay/media_library/pick_local_media_directory.dart';
 import 'package:nipaplay/services/harmony_local_media_service.dart';
 import 'package:nipaplay/utils/platform_identity.dart' as platformIdentity;
@@ -34,6 +35,7 @@ import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
+import 'package:nipaplay/models/media_identity.dart';
 import 'package:nipaplay/utils/manual_match_history.dart';
 import 'package:nipaplay/providers/watch_history_provider.dart';
 import 'package:nipaplay/providers/shared_remote_library_provider.dart';
@@ -47,6 +49,8 @@ import 'package:nipaplay/themes/nipaplay/widgets/search_bar_action_button.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/webdav_connection_dialog.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_cue_sheet_dialog.dart';
+import 'package:nipaplay/services/cue_sheet_parser.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/smb_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_webdav_connection_dialog.dart';
@@ -3067,6 +3071,82 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
               ),
             ),
           );
+          return;
+        }
+        if (asset['kind'] == 'cue') {
+          if (!isLocalSource && sourceConnection == null) {
+            if (assetContext.mounted) {
+              BlurSnackBar.show(assetContext, '当前设备未配置此媒体来源的 WebDAV 连接');
+            }
+            return;
+          }
+          try {
+            final cueText = isLocalSource
+                ? await io.File(p.join(rootPath, relative)).readAsString()
+                : utf8.decode(await WebDAVService.instance.readFileBytes(
+                    sourceConnection!,
+                    fullPath,
+                  ));
+            if (!assetContext.mounted) return;
+            final tracks = CueSheetParser.parse(cueText, cuePath: relative);
+            if (tracks.isEmpty) {
+              BlurSnackBar.show(assetContext, 'CUE 文件中没有可播放的音频曲目');
+              return;
+            }
+            final selectedTrack = await CloudCueSheetDialog.show(
+              context: assetContext,
+              title: asset['name']?.toString() ?? '选择 CUE 曲目',
+              tracks: tracks,
+            );
+            if (selectedTrack == null || !assetContext.mounted) return;
+            final indexedAssets = await database.getAssets(
+              sourceId: selectedLibraryId,
+            );
+            final audio = indexedAssets.where((entry) =>
+                entry['relative_path'] == selectedTrack.audioRelativePath &&
+                entry['kind'] == 'audio' &&
+                entry['work_key'] == asset['work_key']);
+            if (audio.isEmpty) {
+              BlurSnackBar.show(
+                assetContext,
+                '找不到 CUE 指定的音频文件：${selectedTrack.audioRelativePath}',
+              );
+              return;
+            }
+            final audioName = audio.first['name']?.toString() ?? '';
+            final audioPath = isLocalSource
+                ? p.join(
+                    rootPath,
+                    selectedTrack.audioRelativePath
+                        .replaceAll('/', p.separator),
+                  )
+                : MediaSourceUtils.buildWebDavPath(
+                    sourceConnection!.id,
+                    _joinCloudLibraryPath(
+                      rootPath,
+                      selectedTrack.audioRelativePath,
+                    ),
+                  );
+            widget.onPlayEpisode(WatchHistoryItem(
+              filePath: audioPath,
+              animeName: audioName.replaceAll(RegExp(r'\.[^.]+$'), ''),
+              episodeTitle: selectedTrack.title,
+              duration: 0,
+              lastPosition: selectedTrack.startPosition.inMilliseconds,
+              watchProgress: 0,
+              lastWatchTime: DateTime.now(),
+              mediaKey: MediaIdentity.remotePathKey(
+                source: 'cloudmedia',
+                connectionId: selectedLibraryId,
+                rawPath:
+                    '${selectedTrack.audioRelativePath}#cue-track=${selectedTrack.number}',
+              ),
+            ));
+          } catch (error) {
+            if (assetContext.mounted) {
+              BlurSnackBar.show(assetContext, '读取 CUE 文件失败：$error');
+            }
+          }
           return;
         }
         final name = asset['name']?.toString() ?? '';
