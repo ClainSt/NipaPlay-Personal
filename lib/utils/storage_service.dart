@@ -198,7 +198,7 @@ class StorageService {
         try {
         final dirs = await getExternalStorageDirectories();
         if (dirs != null && dirs.isNotEmpty) {
-          final customDir = Directory('${dirs[0].path}/NipaPlay');
+          final customDir = Directory('${dirs[0].path}/NipaPlay Personal');
           
           bool isAccessible = false;
           if (await customDir.exists()) {
@@ -224,7 +224,7 @@ class StorageService {
           }
       }
       
-      // 所有平台的最终默认路径：Documents/nipaplay
+      // 所有平台的最终默认路径：Documents/nipaplay_personal
       final documentsDir = await getApplicationDocumentsDirectory();
       
       // iOS直接使用Documents目录
@@ -232,8 +232,8 @@ class StorageService {
         return documentsDir;
       }
       
-      // 其他平台使用Documents/nipaplay子目录
-      final nipaplayDir = Directory('${documentsDir.path}/nipaplay');
+      // 个人版使用独立目录，避免与官方版共享观看记录和缓存。
+      final nipaplayDir = Directory('${documentsDir.path}/nipaplay_personal');
       if (!await nipaplayDir.exists()) {
         await nipaplayDir.create(recursive: true);
         debugPrint('已创建应用子目录: ${nipaplayDir.path}');
