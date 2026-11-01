@@ -61,7 +61,7 @@ void main() {
 
     expect(find.text('本地媒体库刮削模式'), findsOneWidget);
     expect(find.text('WebDAV 媒体库刮削模式'), findsOneWidget);
-    expect(find.text('动画详情显示媒体分类'), findsOneWidget);
+    expect(find.text('动画详情页模式'), findsOneWidget);
 
     var switches = tester
         .widgetList<FluentSettingsSwitch>(find.byType(FluentSettingsSwitch))

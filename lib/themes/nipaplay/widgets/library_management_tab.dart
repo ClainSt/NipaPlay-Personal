@@ -8,6 +8,7 @@ import 'package:nipaplay/utils/platform_identity.dart' as platformIdentity;
 import 'dart:io' as io;
 import 'package:path/path.dart' as p;
 import 'package:nipaplay/models/watch_history_model.dart';
+import 'package:nipaplay/models/playable_item.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:provider/provider.dart';
@@ -30,6 +31,8 @@ import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/webdav_service.dart'; // 导入WebDAV服务
 import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
+import 'package:nipaplay/services/playback_service.dart';
 import 'package:nipaplay/services/auto_sync_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
@@ -3035,6 +3038,91 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             'title_cn': '未关联文件',
           },
       ];
+
+      Future<void> playIndexedAudio(
+        Map<String, Object?> audioAsset, {
+        CueSheetTrack? cueTrack,
+        List<CueSheetTrack>? cueTracks,
+      }) async {
+        if (!isLocalSource && sourceConnection == null) {
+          if (mounted) {
+            BlurSnackBar.show(context, '当前设备未配置此媒体来源的 WebDAV 连接');
+          }
+          return;
+        }
+        final workKey = audioAsset['work_key']?.toString() ?? '.';
+        final workMatches =
+            catalogWorks.where((work) => work['work_key'] == workKey).toList();
+        final work =
+            workMatches.isEmpty ? const <String, Object?>{} : workMatches.first;
+        final workTitle = work['title_cn']?.toString().trim().isNotEmpty == true
+            ? work['title_cn'].toString()
+            : work['title']?.toString().trim().isNotEmpty == true
+                ? work['title'].toString()
+                : audioAsset['name']?.toString() ?? 'CD';
+        final animeId = int.tryParse(work['bangumi_id']?.toString() ?? '');
+        final relativeAudio = cueTrack?.audioRelativePath ??
+            audioAsset['relative_path']?.toString() ??
+            '';
+        final audioPath = isLocalSource
+            ? p.join(rootPath, relativeAudio.replaceAll('/', p.separator))
+            : MediaSourceUtils.buildWebDavPath(
+                sourceConnection!.id,
+                _joinCloudLibraryPath(rootPath, relativeAudio),
+              );
+        final identityPath = cueTrack == null
+            ? relativeAudio
+            : '$relativeAudio#cue-track=${cueTrack.number}';
+        final mediaKey = MediaIdentity.remotePathKey(
+          source: 'cloudmedia',
+          connectionId: selectedLibraryId,
+          rawPath: identityPath,
+        );
+        final previousHistory =
+            await WatchHistoryManager.getHistoryByMediaKey(mediaKey);
+        final playbackContext = await CloudMediaPlaybackContextFactory.create(
+          currentAsset: {
+            ...audioAsset,
+            'kind': 'audio',
+            if (cueTracks != null) 'cue_tracks': cueTracks,
+          },
+          sourceId: selectedLibraryId,
+          rootPath: rootPath,
+          normalizedRoot:
+              rootPath.replaceAll('\\', '/').replaceFirst(RegExp(r'/+$'), ''),
+          isLocalSource: isLocalSource,
+          connectionId: sourceConnection?.id,
+          workKey: workKey,
+          title: workTitle,
+          animeId: animeId,
+        );
+        final displayName = cueTrack?.title ??
+            (audioAsset['name']?.toString() ?? relativeAudio);
+        final historyItem = WatchHistoryItem(
+          filePath: audioPath,
+          animeName: workTitle,
+          episodeTitle: displayName,
+          animeId: animeId,
+          duration: previousHistory?.duration ?? 0,
+          lastPosition: cueTrack?.startPosition.inMilliseconds ??
+              previousHistory?.lastPosition ??
+              0,
+          watchProgress: previousHistory?.watchProgress ?? 0,
+          lastWatchTime: previousHistory?.lastWatchTime ?? DateTime.now(),
+          mediaKey: mediaKey,
+        );
+        await PlaybackService().play(PlayableItem(
+          videoPath: audioPath,
+          title: workTitle,
+          subtitle: displayName,
+          animeId: animeId,
+          historyItem: historyItem,
+          mediaKey: mediaKey,
+          initialPositionMs: cueTrack?.startPosition.inMilliseconds,
+          detailContext: playbackContext,
+        ));
+      }
+
       Future<void> openCloudAsset(
         BuildContext assetContext,
         Map<String, Object?> asset,
@@ -3113,35 +3201,11 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
               );
               return;
             }
-            final audioName = audio.first['name']?.toString() ?? '';
-            final audioPath = isLocalSource
-                ? p.join(
-                    rootPath,
-                    selectedTrack.audioRelativePath
-                        .replaceAll('/', p.separator),
-                  )
-                : MediaSourceUtils.buildWebDavPath(
-                    sourceConnection!.id,
-                    _joinCloudLibraryPath(
-                      rootPath,
-                      selectedTrack.audioRelativePath,
-                    ),
-                  );
-            widget.onPlayEpisode(WatchHistoryItem(
-              filePath: audioPath,
-              animeName: audioName.replaceAll(RegExp(r'\.[^.]+$'), ''),
-              episodeTitle: selectedTrack.title,
-              duration: 0,
-              lastPosition: selectedTrack.startPosition.inMilliseconds,
-              watchProgress: 0,
-              lastWatchTime: DateTime.now(),
-              mediaKey: MediaIdentity.remotePathKey(
-                source: 'cloudmedia',
-                connectionId: selectedLibraryId,
-                rawPath:
-                    '${selectedTrack.audioRelativePath}#cue-track=${selectedTrack.number}',
-              ),
-            ));
+            await playIndexedAudio(
+              audio.first,
+              cueTrack: selectedTrack,
+              cueTracks: tracks,
+            );
           } catch (error) {
             if (assetContext.mounted) {
               BlurSnackBar.show(assetContext, '读取 CUE 文件失败：$error');
@@ -3150,6 +3214,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           return;
         }
         final name = asset['name']?.toString() ?? '';
+        if (category == 'cd' && asset['kind'] == 'audio') {
+          await playIndexedAudio(asset);
+          return;
+        }
         if (isLocalSource) {
           widget.onPlayEpisode(WatchHistoryItem(
             filePath: p.join(rootPath, relative.replaceAll('/', p.separator)),
@@ -3379,6 +3447,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                         final relative =
                                             row['relative_path']?.toString() ??
                                                 '';
+                                        if (category == 'cd' &&
+                                            row['kind'] == 'audio') {
+                                          Navigator.of(dialogContext).pop();
+                                          await playIndexedAudio(row);
+                                          return;
+                                        }
                                         if (isLocalSource) {
                                           if (!mounted ||
                                               !dialogContext.mounted) {

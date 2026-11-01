@@ -70,8 +70,10 @@ class LabsSettingsContent extends StatelessWidget {
                   onTap: () => _configureTmdbToken(context, labsSettings),
                 ),
                 AdaptiveSettingsTile.toggle(
-                  title: '动画详情显示媒体分类',
-                  subtitle: '开启后在动画详情页增加正片、特典、CDs 和 Scans 分类；关闭时保留原版详情页布局',
+                  title: '动画详情页模式',
+                  subtitle: labsSettings.enableCloudAnimeDetailSections
+                      ? '分类模式：显示正片、特典、CDs 和 Scans'
+                      : '原版模式：使用 NipaPlay 原版详情页布局',
                   icon: Ionicons.albums_outline,
                   phoneIcon: cupertino.CupertinoIcons.rectangle_stack,
                   value: labsSettings.enableCloudAnimeDetailSections,
