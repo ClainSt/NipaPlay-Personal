@@ -15,6 +15,48 @@ class CloudMediaScrapeResult {
 /// Metadata-only scraper. It sends TMDB IDs to the existing NipaPlay metadata
 /// provider and never receives a media path or opens a video file.
 class CloudMediaScraper {
+  CloudMediaScraper({
+    TmdbMetadataService Function()? tmdbMetadataServiceFactory,
+  }) : _tmdbMetadataServiceFactory =
+            tmdbMetadataServiceFactory ?? TmdbMetadataService.new;
+
+  final TmdbMetadataService Function() _tmdbMetadataServiceFactory;
+
+  Future<bool> rescrapeWork({
+    required String sourceId,
+    required String workKey,
+  }) async {
+    final database = CloudMediaIndexDatabase.instance;
+    final work = (await database.getWorks(sourceId: sourceId)).where(
+      (entry) => entry['work_key'] == workKey,
+    );
+    if (work.isEmpty) return false;
+    final record = work.first;
+    final tmdbId = int.tryParse(
+      (record['tmdb_tv_id'] ??
+                  record['tmdb_movie_id'] ??
+                  record['tmdb_unknown_id'] ??
+                  record['tmdb_id'])
+              ?.toString() ??
+          '',
+    );
+    if (tmdbId == null || tmdbId <= 0) return false;
+
+    final service = _tmdbMetadataServiceFactory();
+    try {
+      return await service.scrapeWork(
+        sourceId: sourceId,
+        workKey: workKey,
+        tmdbId: tmdbId,
+        type: record['tmdb_type']?.toString() ?? 'unknown',
+      );
+    } catch (_) {
+      return false;
+    } finally {
+      service.close();
+    }
+  }
+
   Future<CloudMediaScrapeResult> scrape({
     required String sourceId,
     required List<CloudMediaAsset> assets,
@@ -26,7 +68,7 @@ class CloudMediaScraper {
     }
     var matched = 0;
     var failed = 0;
-    final tmdbMetadata = TmdbMetadataService();
+    final tmdbMetadata = _tmdbMetadataServiceFactory();
     for (final entry in works.entries) {
       final workKey = entry.key;
       final workAssets = entry.value;

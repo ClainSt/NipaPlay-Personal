@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/cloud_media_scraper.dart';
 import 'package:nipaplay/services/tmdb_metadata_service.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
@@ -15,6 +16,27 @@ class _TestPaths extends PathProviderPlatform {
 
   @override
   Future<String?> getApplicationSupportPath() async => path;
+}
+
+class _CapturingTmdbMetadataService extends TmdbMetadataService {
+  int? tmdbId;
+  String? tmdbType;
+  String? sourceId;
+  String? workKey;
+
+  @override
+  Future<bool> scrapeWork({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String type,
+  }) async {
+    this.sourceId = sourceId;
+    this.workKey = workKey;
+    this.tmdbId = tmdbId;
+    tmdbType = type;
+    return true;
+  }
 }
 
 void main() {
@@ -171,5 +193,31 @@ void main() {
       isFalse,
     );
     expect(requested, isFalse);
+  });
+
+  test('manual rescrape uses the stored typed TMDB movie ID', () async {
+    final service = _CapturingTmdbMetadataService();
+    addTearDown(service.close);
+    await database.upsertPendingWork(
+      sourceId: 'library-manual-rescrape',
+      workKey: 'A Movie',
+      tmdbId: 880,
+      tmdbType: 'movie',
+      title: 'A Movie',
+    );
+
+    expect(
+      await CloudMediaScraper(
+        tmdbMetadataServiceFactory: () => service,
+      ).rescrapeWork(
+        sourceId: 'library-manual-rescrape',
+        workKey: 'A Movie',
+      ),
+      isTrue,
+    );
+    expect(service.sourceId, 'library-manual-rescrape');
+    expect(service.workKey, 'A Movie');
+    expect(service.tmdbId, 880);
+    expect(service.tmdbType, 'movie');
   });
 }

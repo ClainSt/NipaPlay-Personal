@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/services/auto_sync_service.dart';
+import 'package:nipaplay/services/cloud_media_scraper.dart';
 
 typedef CloudAssetOpenCallback = Future<void> Function(
   BuildContext context,
@@ -41,12 +42,15 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
 
   late Future<List<Map<String, Object?>>> _assetsFuture;
   late List<Map<String, Object?>> _works;
+  late Map<String, Object?> _work;
   String _filter = 'all';
+  bool _isRescrapingMetadata = false;
 
   @override
   void initState() {
     super.initState();
     _works = List<Map<String, Object?>>.of(widget.works);
+    _work = Map<String, Object?>.of(widget.work);
     _assetsFuture =
         CloudMediaIndexDatabase.instance.getAssets(sourceId: widget.sourceId);
   }
@@ -56,6 +60,51 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
       _assetsFuture =
           CloudMediaIndexDatabase.instance.getAssets(sourceId: widget.sourceId);
     });
+  }
+
+  bool get _canRescrapeMetadata {
+    final id = _work['tmdb_tv_id'] ??
+        _work['tmdb_movie_id'] ??
+        _work['tmdb_unknown_id'] ??
+        _work['tmdb_id'];
+    return int.tryParse(id?.toString() ?? '') != null &&
+        _work['relation_locked'] != 1;
+  }
+
+  Future<void> _rescrapeMetadata() async {
+    final workKey = _work['work_key']?.toString() ?? '.';
+    setState(() => _isRescrapingMetadata = true);
+    var succeeded = false;
+    try {
+      succeeded = await CloudMediaScraper().rescrapeWork(
+        sourceId: widget.sourceId,
+        workKey: workKey,
+      );
+      if (succeeded) {
+        final works = await CloudMediaIndexDatabase.instance
+            .getWorks(sourceId: widget.sourceId);
+        if (!mounted) return;
+        final refreshed = works.where((entry) => entry['work_key'] == workKey);
+        if (refreshed.isNotEmpty) {
+          setState(() {
+            _works = works;
+            _work = Map<String, Object?>.of(refreshed.first);
+          });
+        }
+        unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+      }
+    } catch (_) {
+      succeeded = false;
+    } finally {
+      if (mounted) setState(() => _isRescrapingMetadata = false);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+            succeeded ? '作品元数据已更新并加入同步队列' : '未能获取元数据，请检查 TMDB 令牌、网络和作品 ID'),
+      ),
+    );
   }
 
   Future<void> _editAsset(Map<String, Object?> asset) async {
@@ -213,8 +262,8 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final workKey = widget.work['work_key']?.toString() ?? '.';
-    final title = _workTitle(widget.work);
+    final workKey = _work['work_key']?.toString() ?? '.';
+    final title = _workTitle(_work);
     return AlertDialog(
       title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: SizedBox(
@@ -243,13 +292,13 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
                     .toList();
             return Column(
               children: [
-                if (widget.work['overview']?.toString().isNotEmpty == true)
+                if (_work['overview']?.toString().isNotEmpty == true)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        widget.work['overview'].toString(),
+                        _work['overview'].toString(),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -332,6 +381,18 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
         ),
       ),
       actions: [
+        TextButton.icon(
+          onPressed: _isRescrapingMetadata || !_canRescrapeMetadata
+              ? null
+              : _rescrapeMetadata,
+          icon: _isRescrapingMetadata
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+          label: const Text('重新刮削元数据'),
+        ),
         TextButton(
             onPressed: () => Navigator.pop(context), child: const Text('关闭')),
       ],
