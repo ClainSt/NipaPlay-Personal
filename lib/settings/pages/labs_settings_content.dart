@@ -4,7 +4,6 @@ import 'package:kmbal_ionicons/kmbal_ionicons.dart';
 import 'package:nipaplay/l10n/l10n.dart';
 import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/settings/adaptive_settings_widgets.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/blur_dropdown.dart';
 import 'package:nipaplay/utils/globals.dart' as globals;
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:provider/provider.dart';
@@ -26,7 +25,7 @@ class LabsSettingsContent extends StatelessWidget {
             AdaptiveSettingsSection(
               dividerIndent: 56,
               children: [
-                AdaptiveSettingsTile.dropdown(
+                AdaptiveSettingsTile.toggle(
                   title: '本地媒体库刮削模式',
                   subtitle: labsSettings.localLibraryScrapeMode ==
                           LibraryScrapeMode.tmdbId
@@ -34,19 +33,16 @@ class LabsSettingsContent extends StatelessWidget {
                       : '使用 NipaPlay 原版扫描和匹配流程',
                   icon: Icons.folder_outlined,
                   phoneIcon: cupertino.CupertinoIcons.folder,
-                  items: <DropdownMenuItemData<LibraryScrapeMode>>[
-                    DropdownMenuItemData(
-                      value: LibraryScrapeMode.original,
-                      title: '原版模式',
-                    ),
-                    DropdownMenuItemData(
-                      value: LibraryScrapeMode.tmdbId,
-                      title: 'TMDB-ID 模式',
-                    ),
-                  ],
-                  onChanged: labsSettings.setLocalLibraryScrapeMode,
+                  value: labsSettings.localLibraryScrapeMode ==
+                      LibraryScrapeMode.tmdbId,
+                  onChanged: (enabled) =>
+                      labsSettings.setLocalLibraryScrapeMode(
+                    enabled
+                        ? LibraryScrapeMode.tmdbId
+                        : LibraryScrapeMode.original,
+                  ),
                 ),
-                AdaptiveSettingsTile.dropdown(
+                AdaptiveSettingsTile.toggle(
                   title: 'WebDAV 媒体库刮削模式',
                   subtitle: labsSettings.webDavLibraryScrapeMode ==
                           LibraryScrapeMode.tmdbId
@@ -54,17 +50,14 @@ class LabsSettingsContent extends StatelessWidget {
                       : '使用 NipaPlay 原版 WebDAV 刮削流程',
                   icon: Ionicons.cloud_outline,
                   phoneIcon: cupertino.CupertinoIcons.cloud,
-                  items: <DropdownMenuItemData<LibraryScrapeMode>>[
-                    DropdownMenuItemData(
-                      value: LibraryScrapeMode.original,
-                      title: '原版模式',
-                    ),
-                    DropdownMenuItemData(
-                      value: LibraryScrapeMode.tmdbId,
-                      title: 'TMDB-ID 模式',
-                    ),
-                  ],
-                  onChanged: labsSettings.setWebDavLibraryScrapeMode,
+                  value: labsSettings.webDavLibraryScrapeMode ==
+                      LibraryScrapeMode.tmdbId,
+                  onChanged: (enabled) =>
+                      labsSettings.setWebDavLibraryScrapeMode(
+                    enabled
+                        ? LibraryScrapeMode.tmdbId
+                        : LibraryScrapeMode.original,
+                  ),
                 ),
                 AdaptiveSettingsTile.button(
                   title: 'TMDB 元数据访问令牌',
