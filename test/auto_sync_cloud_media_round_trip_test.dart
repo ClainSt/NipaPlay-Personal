@@ -88,7 +88,10 @@ void main() {
       'title_cn': '已同步作品',
       'overview': 'Shared synopsis',
       'poster_url': 'https://image.tmdb.org/t/p/w500/poster.jpg',
-      'metadata_json': jsonEncode({'tmdbId': 100565}),
+      'metadata_json': jsonEncode({
+        'tmdbId': 100565,
+        'backdrop_path': '/backdrop.jpg',
+      }),
       'metadata_status': 'matched',
       'relation_locked': 0,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -162,7 +165,18 @@ void main() {
     expect(restoredRoot['id'], sourceId);
     expect(restoredRoot['connection_id'], 'unmapped:$sourceId');
     expect(restoredRoot['root_path'], '/');
-    expect(await database.getWorks(sourceId: sourceId), hasLength(1));
+    final restoredWorks = await database.getWorks(sourceId: sourceId);
+    expect(restoredWorks, hasLength(1));
+    expect(restoredWorks.single['title'], 'Synced Work');
+    expect(
+      restoredWorks.single['poster_url'],
+      'https://image.tmdb.org/t/p/w500/poster.jpg',
+    );
+    expect(
+      jsonDecode(
+          restoredWorks.single['metadata_json']! as String)['backdrop_path'],
+      '/backdrop.jpg',
+    );
     final restoredAsset = (await database.getAssets(sourceId: sourceId)).single;
     expect(restoredAsset['relative_path'], 'Show/SPs/NCOP.mkv');
     expect(restoredAsset['category'], 'special');
