@@ -1,20 +1,24 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:nipaplay/services/webdav_service.dart';
 
 /// Reads one scan image at a time from its configured WebDAV source.
 class CloudScansReaderPage extends StatefulWidget {
   const CloudScansReaderPage({
     super.key,
-    required this.connection,
+    this.connection,
+    this.localRootPath,
     required this.rootPath,
     required this.images,
     this.initialIndex = 0,
   });
 
-  final WebDAVConnection connection;
+  final WebDAVConnection? connection;
+  final String? localRootPath;
   final String rootPath;
   final List<Map<String, Object?>> images;
   final int initialIndex;
@@ -61,7 +65,13 @@ class _CloudScansReaderPageState extends State<CloudScansReaderPage> {
             '',
           );
       final path = root.isEmpty ? '/$relative' : '$root/$relative';
-      return WebDAVService.instance.readFileBytes(widget.connection, path);
+      final localRoot = widget.localRootPath;
+      if (localRoot != null) {
+        return File(p.join(localRoot, relativePath)).readAsBytes();
+      }
+      final connection = widget.connection;
+      if (connection == null) throw StateError('未配置 WebDAV 媒体来源');
+      return WebDAVService.instance.readFileBytes(connection, path);
     });
   }
 

@@ -4,6 +4,7 @@ import 'package:kmbal_ionicons/kmbal_ionicons.dart';
 import 'package:nipaplay/l10n/l10n.dart';
 import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/settings/adaptive_settings_widgets.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/blur_dropdown.dart';
 import 'package:nipaplay/utils/globals.dart' as globals;
 import 'package:provider/provider.dart';
 
@@ -24,6 +25,54 @@ class LabsSettingsContent extends StatelessWidget {
             AdaptiveSettingsSection(
               dividerIndent: 56,
               children: [
+                AdaptiveSettingsTile.dropdown(
+                  title: '本地媒体库刮削模式',
+                  subtitle: labsSettings.localLibraryScrapeMode ==
+                          LibraryScrapeMode.tmdbId
+                      ? '从文件夹 TMDB ID 直接识别；不读取视频内容'
+                      : '使用 NipaPlay 原版扫描和匹配流程',
+                  icon: Icons.folder_outlined,
+                  phoneIcon: cupertino.CupertinoIcons.folder,
+                  items: <DropdownMenuItemData<LibraryScrapeMode>>[
+                    DropdownMenuItemData(
+                      value: LibraryScrapeMode.original,
+                      title: '原版模式',
+                    ),
+                    DropdownMenuItemData(
+                      value: LibraryScrapeMode.tmdbId,
+                      title: 'TMDB-ID 模式',
+                    ),
+                  ],
+                  onChanged: labsSettings.setLocalLibraryScrapeMode,
+                ),
+                AdaptiveSettingsTile.dropdown(
+                  title: 'WebDAV 媒体库刮削模式',
+                  subtitle: labsSettings.webDavLibraryScrapeMode ==
+                          LibraryScrapeMode.tmdbId
+                      ? '从文件夹 TMDB ID 直接识别；扫描只请求目录元数据'
+                      : '使用 NipaPlay 原版 WebDAV 刮削流程',
+                  icon: Ionicons.cloud_outline,
+                  phoneIcon: cupertino.CupertinoIcons.cloud,
+                  items: <DropdownMenuItemData<LibraryScrapeMode>>[
+                    DropdownMenuItemData(
+                      value: LibraryScrapeMode.original,
+                      title: '原版模式',
+                    ),
+                    DropdownMenuItemData(
+                      value: LibraryScrapeMode.tmdbId,
+                      title: 'TMDB-ID 模式',
+                    ),
+                  ],
+                  onChanged: labsSettings.setWebDavLibraryScrapeMode,
+                ),
+                AdaptiveSettingsTile.toggle(
+                  title: '动画详情显示媒体分类',
+                  subtitle: '开启后在动画详情页增加正片、特典、CDs 和 Scans 分类；关闭时保留原版详情页布局',
+                  icon: Ionicons.albums_outline,
+                  phoneIcon: cupertino.CupertinoIcons.rectangle_stack,
+                  value: labsSettings.enableCloudAnimeDetailSections,
+                  onChanged: labsSettings.setEnableCloudAnimeDetailSections,
+                ),
                 if (!globals.isTelevision)
                   AdaptiveSettingsTile.toggle(
                     title: _text(

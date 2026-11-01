@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
 import 'package:nipaplay/services/bangumi_api_service.dart';
@@ -65,6 +66,10 @@ import 'package:nipaplay/app/app_display_surface.dart';
 import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/media_library/adaptive_media_library_primitives.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_anime_detail_sections.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/webdav_service.dart';
 
 enum _EpisodeCleanupAction {
   clearMatchInfo,
@@ -75,6 +80,7 @@ enum _ImmersiveMoreAction {
   changeBackdrop,
   toggleFavorite,
   editBangumiRating,
+  showCloudMediaSections,
   searchTags,
   reverseEpisodes,
   clearHistory,
@@ -1011,6 +1017,94 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     return _collectionTypeLabels[type] ?? '未收藏';
   }
 
+  Future<void> _openCloudAnimeAsset(
+    BuildContext assetContext,
+    Map<String, Object?> asset,
+  ) async {
+    final sourceId = asset['source_id']?.toString() ?? '';
+    final root =
+        await CloudMediaIndexDatabase.instance.getLibraryRoot(sourceId);
+    final connectionId = root?['connection_id']?.toString();
+    final isLocalSource = connectionId?.startsWith('local:') == true;
+    final connection =
+        isLocalSource || connectionId == null || connectionId.isEmpty
+            ? null
+            : WebDAVService.instance.getConnectionByIdOrName(connectionId);
+    if (!mounted || !assetContext.mounted) return;
+    if (root == null || (!isLocalSource && connection == null)) {
+      BlurSnackBar.show(assetContext, '请先为此云媒体库配置本机 WebDAV 连接');
+      return;
+    }
+    final rootPath = root['local_root_path']?.toString() ??
+        root['root_path']?.toString() ??
+        '/';
+    final relativePath = asset['relative_path']?.toString() ?? '';
+    final normalizedRoot =
+        rootPath.replaceAll('\\', '/').replaceFirst(RegExp(r'/+$'), '');
+    final normalizedRelative =
+        relativePath.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
+    final fullPath = isLocalSource
+        ? p.join(rootPath, relativePath)
+        : normalizedRoot.isEmpty
+            ? '/$normalizedRelative'
+            : '$normalizedRoot/$normalizedRelative';
+
+    if (asset['category'] == 'scan') {
+      final images = (await CloudMediaIndexDatabase.instance
+              .getAssets(sourceId: sourceId))
+          .where((entry) =>
+              entry['work_key'] == asset['work_key'] &&
+              entry['category'] == 'scan' &&
+              entry['kind'] == 'image')
+          .toList()
+        ..sort((a, b) => (a['relative_path']?.toString() ?? '')
+            .toLowerCase()
+            .compareTo((b['relative_path']?.toString() ?? '').toLowerCase()));
+      final initialIndex = images.indexWhere(
+        (entry) => entry['relative_path'] == relativePath,
+      );
+      if (!mounted || !assetContext.mounted) return;
+      await Navigator.of(assetContext).push<void>(
+        MaterialPageRoute(
+          builder: (_) => CloudScansReaderPage(
+            connection: connection,
+            rootPath: rootPath,
+            localRootPath: isLocalSource ? rootPath : null,
+            images: images,
+            initialIndex: initialIndex < 0 ? 0 : initialIndex,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final name = asset['name']?.toString() ?? '';
+    final filePath = isLocalSource
+        ? fullPath
+        : MediaSourceUtils.buildWebDavPath(connection!.id, fullPath);
+    final anime = _detailedAnime;
+    final title =
+        anime?.nameCn.isNotEmpty == true ? anime!.nameCn : anime?.name ?? '云媒体';
+    final history = WatchHistoryItem(
+      filePath: filePath,
+      animeName: title,
+      episodeTitle: name,
+      animeId: widget.animeId,
+      duration: 0,
+      lastPosition: 0,
+      watchProgress: 0,
+      lastWatchTime: DateTime.now(),
+    );
+    final didStart = await PlaybackService().play(PlayableItem(
+      videoPath: filePath,
+      title: title,
+      subtitle: name,
+      animeId: widget.animeId,
+      historyItem: history,
+    ));
+    if (didStart) _dismissDetailIfNeeded();
+  }
+
   Future<void> _playEpisodeFromSourceOrHistory({
     required BangumiAnime anime,
     required EpisodeData episode,
@@ -1339,6 +1433,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildSummaryView(BangumiAnime anime) {
+    final showCloudMediaSections =
+        context.watch<LabsSettingsProvider>().enableCloudAnimeDetailSections;
     final sharedSummary = _sharedSummary;
     final playbackDetail = _playbackDetailContext;
     final allowPlaybackOverrides =
@@ -1511,6 +1607,13 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                         SliverToBoxAdapter(
                             child: _buildDetailTags(
                                 anime, sectionTitleStyle, secondaryTextColor)),
+                        if (showCloudMediaSections)
+                          SliverToBoxAdapter(
+                            child: CloudAnimeDetailSections(
+                              animeId: anime.id,
+                              onOpenAsset: _openCloudAnimeAsset,
+                            ),
+                          ),
                       ],
                       if (_hasOpenedCommentsTab)
                         SliverVisibility(
@@ -3098,6 +3201,25 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     }
   }
 
+  Future<void> _showCloudMediaSectionsDialog(BangumiAnime anime) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => Dialog(
+        child: SizedBox(
+          width: 760,
+          height: 620,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: CloudAnimeDetailSections(
+              animeId: anime.id,
+              onOpenAsset: _openCloudAnimeAsset,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _handleImmersiveMoreAction(
     _ImmersiveMoreAction action,
     BangumiAnime anime,
@@ -3109,6 +3231,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
         _toggleFavorite();
       case _ImmersiveMoreAction.editBangumiRating:
         _showRatingDialog();
+      case _ImmersiveMoreAction.showCloudMediaSections:
+        _showCloudMediaSectionsDialog(anime);
       case _ImmersiveMoreAction.searchTags:
         _openTagSearch();
       case _ImmersiveMoreAction.reverseEpisodes:
@@ -3119,6 +3243,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildImmersiveActions(BangumiAnime anime) {
+    final showCloudMediaSections =
+        context.watch<LabsSettingsProvider>().enableCloudAnimeDetailSections;
     final episodes = anime.episodeList ?? const <EpisodeData>[];
     final resolved =
         episodes.isEmpty ? null : _resolveImmersivePrimary(episodes);
@@ -3138,6 +3264,11 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
         DropdownMenuItemData<_ImmersiveMoreAction>(
           title: '编辑 Bangumi 评分与收藏',
           value: _ImmersiveMoreAction.editBangumiRating,
+        ),
+      if (showCloudMediaSections)
+        DropdownMenuItemData<_ImmersiveMoreAction>(
+          title: '正片、特典、CDs 与 Scans',
+          value: _ImmersiveMoreAction.showCloudMediaSections,
         ),
       if (anime.tags?.isNotEmpty == true)
         DropdownMenuItemData<_ImmersiveMoreAction>(

@@ -21,6 +21,7 @@ import 'package:nipaplay/utils/storage_service.dart'; // 导入StorageService
 import 'package:permission_handler/permission_handler.dart'; // 导入权限处理库
 import 'package:nipaplay/utils/android_storage_helper.dart'; // 导入Android存储辅助类
 import 'package:nipaplay/providers/appearance_settings_provider.dart';
+import 'package:nipaplay/providers/labs_settings_provider.dart';
 // Import MethodChannel
 import 'package:shared_preferences/shared_preferences.dart'; // Import SharedPreferences
 import 'package:nipaplay/services/manual_danmaku_matcher.dart'; // 导入手动弹幕匹配器
@@ -654,9 +655,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     if (io.Platform.isIOS) {
       // 使用StorageService获取应用存储目录
       final io.Directory appDir = await StorageService.getAppStorageDirectory();
-      await scanService.startDirectoryScan(appDir.path,
-          skipPreviouslyMatchedUnwatched:
-              false); // Ensure full scan for new folder
+      await _scanLocalFolderWithSelectedMode(scanService, appDir.path);
       return;
     }
     // --- End iOS平台逻辑 ---
@@ -838,9 +837,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     // [修改] 自定义目录会影响安卓缓存，先注释
     //await StorageService.saveCustomStoragePath(selectedDirectory);
     // 开始扫描目录
-    await scanService.startDirectoryScan(selectedDirectory,
-        skipPreviouslyMatchedUnwatched:
-            false); // Ensure full scan for new folder
+    await _scanLocalFolderWithSelectedMode(scanService, selectedDirectory);
   }
 
   Future<void> _handleRemoveFolder(String folderPathToRemove) async {
@@ -2015,7 +2012,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                       ],
                     );
                     if (confirm == true) {
-                      await scanService.rescanAllFolders();
+                      await _rescanLocalFoldersWithSelectedMode(scanService);
                       // 显式刷新媒体库数据，确保新扫描到的内容立即显示
                       // （不能只依赖 ScanService 的完成通知）；
                       // 同时清掉无效路径缓存，让移出后又移回的文件重新出现。
@@ -2355,9 +2352,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 AdaptiveMediaActionButton(
                                   onPressed: () async {
                                     // 扫描这个有变化的文件夹
-                                    await scanService!.startDirectoryScan(
-                                        change.folderPath,
-                                        skipPreviouslyMatchedUnwatched: false);
+                                    await _scanLocalFolderWithSelectedMode(
+                                      scanService!,
+                                      change.folderPath,
+                                    );
                                     if (mounted) {
                                       BlurSnackBar.show(context,
                                           '已开始扫描: ${change.displayName}');
@@ -2381,9 +2379,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                 for (final change
                                     in scanService!.detectedChanges) {
                                   if (change.changeType != 'deleted') {
-                                    await scanService!.startDirectoryScan(
-                                        change.folderPath,
-                                        skipPreviouslyMatchedUnwatched: false);
+                                    await _scanLocalFolderWithSelectedMode(
+                                      scanService!,
+                                      change.folderPath,
+                                    );
                                   }
                                 }
                                 scanService!.clearDetectedChanges();
@@ -2910,6 +2909,16 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     final location = _mountedLocation;
     final connection = location?.webdavConnection;
     if (location == null || connection == null || _isRemoteMode) return;
+    final labsSettings = context.read<LabsSettingsProvider>();
+    await labsSettings.ready;
+    if (labsSettings.webDavLibraryScrapeMode == LibraryScrapeMode.original) {
+      await _scanWebDAVFolder(
+        connection,
+        _currentMountedPath,
+        p.basename(_currentMountedPath),
+      );
+      return;
+    }
     setState(() => _isMountedDirectoryLoading = true);
     try {
       final result = await CloudMediaScanner().scanAndIndex(
@@ -3328,6 +3337,16 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     WebDAVConnection connection,
     Map<String, Object?> root,
   ) async {
+    final labsSettings = context.read<LabsSettingsProvider>();
+    await labsSettings.ready;
+    if (labsSettings.webDavLibraryScrapeMode == LibraryScrapeMode.original) {
+      await _scanWebDAVFolder(
+        connection,
+        root['root_path']?.toString() ?? '/',
+        root['name']?.toString() ?? 'WebDAV',
+      );
+      return;
+    }
     setState(() => _isMountedDirectoryLoading = true);
     try {
       final result = await CloudMediaScanner().scanAndIndex(
@@ -3885,19 +3904,93 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     );
     final confirmed = await _confirmFolderScan(context, folderPath, secondary);
     if (confirmed != true || !mounted) return;
+    final labsSettings = context.read<LabsSettingsProvider>();
+    await labsSettings.ready;
+    if (!mounted) return;
+    if (labsSettings.localLibraryScrapeMode == LibraryScrapeMode.tmdbId) {
+      setState(() => _isMountedDirectoryLoading = true);
+      try {
+        await scanService.addScannedFolder(folderPath);
+        final result = await CloudMediaScanner().scanLocalAndIndex(
+          rootPath: folderPath,
+        );
+        if (!mounted) return;
+        BlurSnackBar.show(
+          context,
+          '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
+          '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容',
+        );
+      } catch (error) {
+        if (mounted) BlurSnackBar.show(context, '本地 TMDB-ID 扫描失败：$error');
+      } finally {
+        if (mounted) setState(() => _isMountedDirectoryLoading = false);
+      }
+      return;
+    }
     await scanService.startDirectoryScan(
       folderPath,
       skipPreviouslyMatchedUnwatched: false,
     );
   }
 
+  Future<void> _scanLocalFolderWithSelectedMode(
+    ScanService scanService,
+    String folderPath,
+  ) async {
+    final labsSettings = context.read<LabsSettingsProvider>();
+    await labsSettings.ready;
+    if (labsSettings.localLibraryScrapeMode == LibraryScrapeMode.tmdbId) {
+      if (mounted) setState(() => _isMountedDirectoryLoading = true);
+      try {
+        await scanService.addScannedFolder(folderPath);
+        final result = await CloudMediaScanner().scanLocalAndIndex(
+          rootPath: folderPath,
+        );
+        if (mounted) {
+          BlurSnackBar.show(
+            context,
+            '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品',
+          );
+        }
+      } catch (error) {
+        if (mounted) BlurSnackBar.show(context, '本地 TMDB-ID 扫描失败：$error');
+      } finally {
+        if (mounted) setState(() => _isMountedDirectoryLoading = false);
+      }
+      return;
+    }
+    await scanService.startDirectoryScan(
+      folderPath,
+      skipPreviouslyMatchedUnwatched: false,
+    );
+  }
+
+  Future<void> _rescanLocalFoldersWithSelectedMode(
+    ScanService scanService,
+  ) async {
+    final labsSettings = context.read<LabsSettingsProvider>();
+    await labsSettings.ready;
+    if (labsSettings.localLibraryScrapeMode == LibraryScrapeMode.tmdbId) {
+      if (mounted) setState(() => _isMountedDirectoryLoading = true);
+      try {
+        for (final folder in scanService.scannedFolders) {
+          await CloudMediaScanner().scanLocalAndIndex(rootPath: folder);
+        }
+        if (mounted) BlurSnackBar.show(context, 'TMDB-ID 媒体库重扫完成');
+      } catch (error) {
+        if (mounted) BlurSnackBar.show(context, 'TMDB-ID 媒体库重扫失败：$error');
+      } finally {
+        if (mounted) setState(() => _isMountedDirectoryLoading = false);
+      }
+      return;
+    }
+    await scanService.rescanAllFolders();
+  }
+
   Future<void> _scanAllDetectedChanges(ScanService scanService) async {
     for (final change in List.of(scanService.detectedChanges)) {
       if (change.changeType == 'deleted') continue;
-      await scanService.startDirectoryScan(
-        change.folderPath,
-        skipPreviouslyMatchedUnwatched: false,
-      );
+      await _scanLocalFolderWithSelectedMode(scanService, change.folderPath);
     }
     scanService.clearDetectedChanges();
   }
@@ -4082,9 +4175,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             onAction: () async {
               for (final change in scanService.detectedChanges) {
                 if (change.changeType != 'deleted') {
-                  await scanService.startDirectoryScan(
+                  await _scanLocalFolderWithSelectedMode(
+                    scanService,
                     change.folderPath,
-                    skipPreviouslyMatchedUnwatched: false,
                   );
                 }
               }
@@ -4824,9 +4917,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       ],
     );
     if (confirm == true) {
-      await scanService.startDirectoryScan(
+      await _scanLocalFolderWithSelectedMode(
+        scanService,
         folderPath,
-        skipPreviouslyMatchedUnwatched: false,
       );
       if (mounted) {
         BlurSnackBar.show(context, '已开始智能扫描: ${p.basename(folderPath)}');
@@ -4853,7 +4946,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       ],
     );
     if (confirm == true) {
-      await scanService.rescanAllFolders();
+      await _rescanLocalFoldersWithSelectedMode(scanService);
       // 显式刷新媒体库数据，确保新扫描到的内容立即显示
       // （不能只依赖 ScanService 的完成通知）；
       // 同时清掉无效路径缓存，让移出后又移回的文件重新出现。
@@ -5475,9 +5568,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                             secondaryTextColor,
                           );
                           if (confirm == true) {
-                            await scanService.startDirectoryScan(
+                            await _scanLocalFolderWithSelectedMode(
+                              scanService,
                               folderPath,
-                              skipPreviouslyMatchedUnwatched: false,
                             );
                             if (mounted) {
                               BlurSnackBar.show(
@@ -6524,6 +6617,25 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         updateProgress: true,
       );
       try {
+        if (!_isRemoteMode) {
+          final labsSettings = context.read<LabsSettingsProvider>();
+          await labsSettings.ready;
+          if (!mounted) return;
+          if (labsSettings.webDavLibraryScrapeMode ==
+              LibraryScrapeMode.tmdbId) {
+            final result = await CloudMediaScanner().scanAndIndex(
+              connection: connection,
+              rootPath: folderPath,
+            );
+            if (!mounted) return;
+            final summary =
+                'TMDB-ID 模式已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
+                '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；视频内容读取 0 次';
+            _finishRemoteScrape(summary);
+            BlurSnackBar.show(context, summary);
+            return;
+          }
+        }
         if (_isRemoteMode) {
           final provider =
               Provider.of<SharedRemoteLibraryProvider>(context, listen: false);

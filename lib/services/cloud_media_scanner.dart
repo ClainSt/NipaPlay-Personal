@@ -1,3 +1,6 @@
+import 'dart:io' as io;
+
+import 'package:path/path.dart' as p;
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_scraper.dart';
@@ -104,6 +107,76 @@ class CloudMediaScanner {
       recursive: recursive,
       onProgress: onProgress,
     );
+    return _indexAssets(libraryId, result);
+  }
+
+  /// Local counterpart of [scanAndIndex]. It stats directory entries only and
+  /// never opens the video files.
+  Future<CloudMediaScanResult> scanLocalAndIndex({
+    required String rootPath,
+    bool recursive = true,
+    void Function(int directoriesVisited)? onProgress,
+  }) async {
+    final root = p.normalize(p.absolute(rootPath));
+    final rootDirectory = io.Directory(root);
+    if (!await rootDirectory.exists()) {
+      throw io.FileSystemException('媒体库目录不存在', root);
+    }
+    final connectionId = 'local:$root';
+    final database = CloudMediaIndexDatabase.instance;
+    final libraryId = await database.ensureLibraryRoot(
+      connectionId: connectionId,
+      rootPath: root,
+    );
+    final pending = <String>[root];
+    final visited = <String>{};
+    final assets = <CloudMediaAsset>[];
+    while (pending.isNotEmpty) {
+      final directoryPath = pending.removeLast();
+      if (!visited.add(directoryPath)) continue;
+      final directory = io.Directory(directoryPath);
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is io.Directory) {
+          if (recursive) pending.add(entity.path);
+          continue;
+        }
+        if (entity is! io.File) continue;
+        final name = p.basename(entity.path);
+        final kind = _kind(name);
+        if (kind == null) continue;
+        final stat = await entity.stat();
+        final relativePath = p.relative(entity.path, from: root);
+        final relativeDirectory = p.dirname(relativePath);
+        final normalizedDirectory = relativeDirectory == '.'
+            ? ''
+            : relativeDirectory.replaceAll('\\', '/');
+        assets.add(CloudMediaAsset(
+          sourceId: libraryId,
+          relativePath: relativePath.replaceAll('\\', '/'),
+          workKey: _workKey(root, p.join(root, relativeDirectory)),
+          name: name,
+          size: stat.size,
+          modified: stat.modified,
+          kind: kind,
+          category: classifyAsset('/$normalizedDirectory', name, kind),
+          tmdbId: parseTmdbId('$root/$normalizedDirectory'),
+          tmdbType: parseTmdbType('$root/$normalizedDirectory'),
+          episodeNumber: episodeNumberFromName(name),
+        ));
+      }
+      onProgress?.call(visited.length);
+    }
+    return _indexAssets(
+      libraryId,
+      CloudMediaScanResult(rootPath: root, assets: List.unmodifiable(assets)),
+    );
+  }
+
+  Future<CloudMediaScanResult> _indexAssets(
+    String libraryId,
+    CloudMediaScanResult result,
+  ) async {
+    final database = CloudMediaIndexDatabase.instance;
     await database.upsertAssets(
       result.assets
           .map(
