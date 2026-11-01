@@ -102,5 +102,10 @@ void main() {
     expect(asset['work_key'], 'Show');
     expect(asset['category'], 'extra');
     expect(asset['relation_locked'], 0);
+
+    await database.deleteLibraryRoot(first);
+    expect(await database.getLibraryRoot(first), isNull);
+    expect(await database.getAssets(sourceId: first), isEmpty);
+    expect(await database.getWorks(sourceId: first), isEmpty);
   });
 }

@@ -2891,6 +2891,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         onPressed: _isMountedDirectoryLoading ? null : _scanMountedWebDAVRoot,
       ));
       actions.add(LocalLibraryActionControl(
+        label: '管理云媒体库',
+        desktopIcon: Icons.folder_special_outlined,
+        phoneIcon: cupertino.CupertinoIcons.folder,
+        onPressed: _showCloudLibraryRoots,
+      ));
+      actions.add(LocalLibraryActionControl(
         label: '查看云媒体索引',
         desktopIcon: Icons.video_library_outlined,
         phoneIcon: cupertino.CupertinoIcons.square_list,
@@ -3206,6 +3212,138 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       );
     } catch (error) {
       if (mounted) BlurSnackBar.show(context, '读取云媒体索引失败：$error');
+    }
+  }
+
+  Future<void> _showCloudLibraryRoots() async {
+    final connection = _mountedLocation?.webdavConnection;
+    if (connection == null) return;
+    final database = CloudMediaIndexDatabase.instance;
+    final roots = await database.getLibraryRoots(connectionId: connection.id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('已添加的云媒体库目录'),
+          content: SizedBox(
+            width: 650,
+            height: 460,
+            child: roots.isEmpty
+                ? const Center(
+                    child: Text('还没有扫描过媒体库目录。浏览到目标文件夹后点击“扫描云媒体库”。'),
+                  )
+                : ListView.separated(
+                    itemCount: roots.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final root = roots[index];
+                      final id = root['id']?.toString() ?? '';
+                      final rootPath = root['root_path']?.toString() ?? '/';
+                      final scanned = root['last_scanned_at']?.toString();
+                      return ListTile(
+                        leading: const Icon(Icons.folder_open_outlined),
+                        title: Text(root['name']?.toString() ?? rootPath),
+                        subtitle: Text(
+                          '$rootPath${scanned == null ? ' · 尚未完成扫描' : ' · 最近扫描 ${DateTime.tryParse(scanned)?.toLocal().toString().substring(0, 16) ?? scanned}'}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          Navigator.of(dialogContext).pop();
+                          _showCloudMediaIndex(libraryId: id);
+                        },
+                        trailing: Wrap(
+                          spacing: 0,
+                          children: [
+                            IconButton(
+                              tooltip: '重新扫描并刮削',
+                              icon: const Icon(Icons.refresh),
+                              onPressed: _isMountedDirectoryLoading
+                                  ? null
+                                  : () async {
+                                      Navigator.of(dialogContext).pop();
+                                      await _scanRegisteredCloudRoot(
+                                        connection,
+                                        root,
+                                      );
+                                    },
+                            ),
+                            IconButton(
+                              tooltip: '删除本地索引',
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () async {
+                                final confirmed = await showDialog<bool>(
+                                  context: dialogContext,
+                                  builder: (confirmContext) => AlertDialog(
+                                    title: const Text('删除媒体库索引？'),
+                                    content: Text(
+                                      '将移除此设备上的“${root['name']}”索引、作品资料和人工关联记录。云盘原文件不会被修改或删除。',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(
+                                          confirmContext,
+                                          false,
+                                        ),
+                                        child: const Text('取消'),
+                                      ),
+                                      FilledButton.tonal(
+                                        onPressed: () => Navigator.pop(
+                                          confirmContext,
+                                          true,
+                                        ),
+                                        child: const Text('删除索引'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true ||
+                                    !dialogContext.mounted) {
+                                  return;
+                                }
+                                await database.deleteLibraryRoot(id);
+                                if (!dialogContext.mounted) return;
+                                setDialogState(() => roots.removeAt(index));
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _scanRegisteredCloudRoot(
+    WebDAVConnection connection,
+    Map<String, Object?> root,
+  ) async {
+    setState(() => _isMountedDirectoryLoading = true);
+    try {
+      final result = await CloudMediaScanner().scanAndIndex(
+        connection: connection,
+        rootPath: root['root_path']?.toString() ?? '/',
+      );
+      if (!mounted) return;
+      BlurSnackBar.show(
+        context,
+        '已刷新 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品；未读取视频内容',
+      );
+      await _showCloudMediaIndex(libraryId: result.libraryId);
+    } catch (error) {
+      if (mounted) BlurSnackBar.show(context, '重新扫描失败：$error');
+    } finally {
+      if (mounted) setState(() => _isMountedDirectoryLoading = false);
     }
   }
 

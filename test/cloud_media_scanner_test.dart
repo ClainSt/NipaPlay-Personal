@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/webdav_service.dart';
@@ -6,6 +8,7 @@ class _FakeWebDavService extends WebDAVService {
   _FakeWebDavService() : super.forTesting();
 
   final List<String> listedPaths = [];
+  final List<String> requestedFileBytes = [];
 
   @override
   Future<List<WebDAVFile>> listDirectoryAll(
@@ -32,6 +35,15 @@ class _FakeWebDavService extends WebDAVService {
       ),
     ];
   }
+
+  @override
+  Future<Uint8List> readFileBytes(
+    WebDAVConnection connection,
+    String path,
+  ) async {
+    requestedFileBytes.add(path);
+    return Uint8List(0);
+  }
 }
 
 void main() {
@@ -56,6 +68,8 @@ void main() {
       expect(result.assets.single.episodeNumber, 1);
       expect(result.assets.single.relativePath,
           '{tmdbid=100565}/[VCB-Studio] Anime Title [01].mkv');
+      expect(webDav.requestedFileBytes, isEmpty,
+          reason: 'catalog scans must not GET video content');
     });
 
     test('recognizes supported TMDB folder markers', () {

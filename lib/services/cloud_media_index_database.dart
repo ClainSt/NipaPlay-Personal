@@ -259,6 +259,32 @@ class CloudMediaIndexDatabase {
     );
   }
 
+  Future<void> deleteLibraryRoot(String libraryId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'cloud_media_relation_history',
+        where: 'source_id = ?',
+        whereArgs: [libraryId],
+      );
+      await txn.delete(
+        'cloud_media_asset',
+        where: 'source_id = ?',
+        whereArgs: [libraryId],
+      );
+      await txn.delete(
+        'cloud_media_work',
+        where: 'source_id = ?',
+        whereArgs: [libraryId],
+      );
+      await txn.delete(
+        'cloud_media_library_root',
+        where: 'id = ?',
+        whereArgs: [libraryId],
+      );
+    });
+  }
+
   String _normalizeRootPath(String path) {
     var normalized = path.trim().replaceAll('\\', '/');
     if (!normalized.startsWith('/')) normalized = '/$normalized';
