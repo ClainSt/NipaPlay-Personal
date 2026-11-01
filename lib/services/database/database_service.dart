@@ -57,6 +57,36 @@ class DatabaseService {
           if (!await _isUnifiedDatabase(db)) {
             throw StateError('不是 NipaPlay 统一媒体数据库: $dbFilePath');
           }
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS cloud_media_asset (
+              source_id TEXT NOT NULL,
+              relative_path TEXT NOT NULL,
+              name TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              category TEXT NOT NULL,
+              episode_number INTEGER,
+              size INTEGER,
+              modified_at TEXT,
+              tmdb_id INTEGER,
+              work_key TEXT NOT NULL DEFAULT '.',
+              relation_locked INTEGER NOT NULL DEFAULT 0,
+              last_seen_at TEXT NOT NULL,
+              PRIMARY KEY (source_id, relative_path)
+            )
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS cloud_media_asset_tmdb_id_index
+            ON cloud_media_asset(tmdb_id)
+          ''');
+          final cloudAssetColumns = await db.rawQuery(
+            'PRAGMA table_info(cloud_media_asset)',
+          );
+          if (!cloudAssetColumns.any((column) => column['name'] == 'episode_number')) {
+            await db.execute('ALTER TABLE cloud_media_asset ADD COLUMN episode_number INTEGER');
+          }
+          if (!cloudAssetColumns.any((column) => column['name'] == 'work_key')) {
+            await db.execute("ALTER TABLE cloud_media_asset ADD COLUMN work_key TEXT NOT NULL DEFAULT '.'");
+          }
         },
       ),
     );
@@ -77,6 +107,47 @@ class DatabaseService {
   // ======================================================================== //
   static Future<void> upsertSourceAnimeEpisodeRelation(AniEpiRltType type, AniEpiRlt relation)  => _withDb((db) => _AnimeEpisodeRepository(db).upsert(relation, type));
   static Future<void> upsertAssetRecord               (DbAssetRecord asset)                     => _withDb((db) => _AssetRepository(db)       .upsert(asset));
+
+  /// Import one fully enumerated scan result. Existing manual work relations
+  /// are preserved; a failed/incomplete scan never implies remote deletion.
+  static Future<void> upsertCloudMediaAssets(
+    List<Map<String, Object?>> assets,
+  ) => _withDb((db) async {
+        final now = DateTime.now().toUtc().toIso8601String();
+        await db.transaction((txn) async {
+          for (final asset in assets) {
+            await txn.rawInsert('''
+              INSERT INTO cloud_media_asset
+                (source_id, relative_path, name, kind, category, episode_number,
+                 work_key, size, modified_at, tmdb_id, last_seen_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(source_id, relative_path) DO UPDATE SET
+                name=excluded.name, kind=excluded.kind,
+                episode_number=excluded.episode_number,
+                work_key=excluded.work_key,
+                category=CASE WHEN cloud_media_asset.relation_locked=1
+                              THEN cloud_media_asset.category ELSE excluded.category END,
+                size=excluded.size, modified_at=excluded.modified_at,
+                tmdb_id=COALESCE(cloud_media_asset.tmdb_id, excluded.tmdb_id),
+                last_seen_at=excluded.last_seen_at
+            ''', [
+              asset['source_id'], asset['relative_path'], asset['name'],
+              asset['kind'], asset['category'], asset['episode_number'],
+              asset['work_key'],
+              asset['size'], asset['modified_at'], asset['tmdb_id'], now,
+            ]);
+          }
+        });
+      });
+
+  static Future<List<Map<String, Object?>>> getCloudMediaAssets({
+    String? sourceId,
+  }) => _withDb((db) => db.query(
+        'cloud_media_asset',
+        where: sourceId == null ? null : 'source_id = ?',
+        whereArgs: sourceId == null ? null : [sourceId],
+        orderBy: 'relative_path COLLATE NOCASE',
+      ));
 
   static Future<void> linkSourceAnimeToCommonAnime    (AniEpiRltType type, int typAniId, int comAniId) => _withDb((db) => _AnimeEpisodeRepository(db).linkAnime    (type, typAniId, comAniId));
   static Future<void> linkSourceEpisodeToCommonEpisode(AniEpiRltType type, int typEpiId, int comEpiId) => _withDb((db) => _AnimeEpisodeRepository(db).linkEpisode  (type, typEpiId, comEpiId));

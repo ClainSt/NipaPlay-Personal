@@ -26,6 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart'; // Import SharedPre
 import 'package:nipaplay/services/manual_danmaku_matcher.dart'; // 导入手动弹幕匹配器
 import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/webdav_service.dart'; // 导入WebDAV服务
+import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
@@ -2819,7 +2820,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   }
 
   List<LocalLibraryActionControl> _buildMountedDirectoryActions() {
-    return [
+    final actions = <LocalLibraryActionControl>[
       LocalLibraryActionControl(
         label: '虚拟根目录',
         desktopIcon: Icons.home_outlined,
@@ -2841,6 +2842,36 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             : () => _loadMountedDirectory(forceRefresh: true),
       ),
     ];
+    final location = _mountedLocation;
+    if (location?.type == _MountedLibraryType.webdav && !_isRemoteMode) {
+      actions.add(LocalLibraryActionControl(
+        label: '扫描云媒体库',
+        desktopIcon: Icons.library_add_check_outlined,
+        phoneIcon: cupertino.CupertinoIcons.cloud_download,
+        onPressed: _isMountedDirectoryLoading ? null : _scanMountedWebDAVRoot,
+      ));
+    }
+    return actions;
+  }
+
+  Future<void> _scanMountedWebDAVRoot() async {
+    final location = _mountedLocation;
+    final connection = location?.webdavConnection;
+    if (location == null || connection == null || _isRemoteMode) return;
+    setState(() => _isMountedDirectoryLoading = true);
+    try {
+      final result = await CloudMediaScanner().scanAndIndex(
+        connection: connection,
+        rootPath: _currentMountedPath,
+      );
+      if (!mounted) return;
+      BlurSnackBar.show(context,
+          '云媒体库扫描完成：${result.assets.length} 个文件；视频内容未读取');
+    } catch (error) {
+      if (mounted) BlurSnackBar.show(context, '云媒体库扫描失败：$error');
+    } finally {
+      if (mounted) setState(() => _isMountedDirectoryLoading = false);
+    }
   }
 
   Widget _buildMountedDirectoryPathBar(_MountedLibraryLocation location) {
