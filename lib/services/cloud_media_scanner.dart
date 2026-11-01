@@ -1,5 +1,5 @@
 import 'package:nipaplay/services/webdav_service.dart';
-import 'package:nipaplay/services/database/database_service.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 
 /// Read-only WebDAV catalog scan. It only enumerates directories via PROPFIND;
 /// it never opens media files or requests video byte ranges.
@@ -70,7 +70,7 @@ class CloudMediaScanner {
       recursive: recursive,
       onProgress: onProgress,
     );
-    await DatabaseService.upsertCloudMediaAssets(result.assets.map((asset) => {
+    await CloudMediaIndexDatabase.instance.upsertAssets(result.assets.map((asset) => {
           'source_id': asset.sourceId,
           'relative_path': asset.relativePath,
           'work_key': asset.workKey,

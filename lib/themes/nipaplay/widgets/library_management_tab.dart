@@ -27,6 +27,7 @@ import 'package:nipaplay/services/manual_danmaku_matcher.dart'; // 导入手动�
 import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/webdav_service.dart'; // 导入WebDAV服务
 import 'package:nipaplay/services/cloud_media_scanner.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
@@ -2850,6 +2851,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         phoneIcon: cupertino.CupertinoIcons.cloud_download,
         onPressed: _isMountedDirectoryLoading ? null : _scanMountedWebDAVRoot,
       ));
+      actions.add(LocalLibraryActionControl(
+        label: '查看云媒体索引',
+        desktopIcon: Icons.video_library_outlined,
+        phoneIcon: cupertino.CupertinoIcons.square_list,
+        onPressed: _showCloudMediaIndex,
+      ));
     }
     return actions;
   }
@@ -2867,10 +2874,62 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       if (!mounted) return;
       BlurSnackBar.show(context,
           '云媒体库扫描完成：${result.assets.length} 个文件；视频内容未读取');
+      await _showCloudMediaIndex();
     } catch (error) {
       if (mounted) BlurSnackBar.show(context, '云媒体库扫描失败：$error');
     } finally {
       if (mounted) setState(() => _isMountedDirectoryLoading = false);
+    }
+  }
+
+  Future<void> _showCloudMediaIndex() async {
+    final location = _mountedLocation;
+    final connection = location?.webdavConnection;
+    if (connection == null) return;
+    try {
+      final rows = await CloudMediaIndexDatabase.instance
+          .getAssets(sourceId: connection.id);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('云媒体索引（${rows.length}）'),
+          content: SizedBox(
+            width: 720,
+            height: 520,
+            child: rows.isEmpty
+                ? const Center(child: Text('此 WebDAV 来源尚无扫描索引'))
+                : ListView.separated(
+                    itemCount: rows.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final row = rows[index];
+                      final id = row['tmdb_id'];
+                      final episode = row['episode_number'];
+                      return ListTile(
+                        dense: true,
+                        title: Text(row['name']?.toString() ?? ''),
+                        subtitle: Text(
+                          '${row['category']} · ${row['relative_path']}'
+                          '${id == null ? '' : ' · TMDB $id'}'
+                          '${episode == null ? '' : ' · 第 $episode 集'}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) BlurSnackBar.show(context, '读取云媒体索引失败：$error');
     }
   }
 
