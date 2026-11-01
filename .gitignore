@@ -52,6 +52,10 @@ docs/error.txt
 /packages/nipaplay_smb2/android/.cxx
 /packages/nipaplay_smb2/android/.cxx
 /packages/nipaplay_smb2/android/.cxx/Debug/6r64695b
+/android/.kotlin/
+/third_party/fvp/android/.cxx/
+/third_party/fvp/android/mdk-sdk/
+/third_party/fvp/android/mdk-sdk-android.7z
 /rust/target
 /server/dandanplay-gateway/target/
 /node_modules/
