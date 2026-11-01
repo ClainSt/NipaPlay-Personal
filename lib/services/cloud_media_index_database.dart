@@ -16,6 +16,20 @@ class CloudMediaIndexDatabase {
   Future<Database>? _opening;
   Future<Database> get database => _opening ??= _open();
 
+  /// Close the app-local index connection, for orderly shutdown and isolated
+  /// tests that use a temporary application-support directory.
+  Future<void> close() async {
+    final opening = _opening;
+    _opening = null;
+    if (opening == null) return;
+    try {
+      final db = await opening;
+      if (db.isOpen) await db.close();
+    } catch (_) {
+      // A failed open has no live connection to close.
+    }
+  }
+
   Future<Database> _open() async {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       sqfliteFfiInit();

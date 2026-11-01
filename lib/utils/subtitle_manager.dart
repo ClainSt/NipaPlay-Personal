@@ -38,6 +38,7 @@ class SubtitleManager extends ChangeNotifier {
   String? _currentExternalSubtitlePath;
   final Map<String, Map<String, dynamic>> _subtitleTrackInfo = {};
   final Map<String, List<dynamic>> _subtitleCache = {};
+  final Map<String, Future<void>> _subtitlePreloadTasks = {};
   final Expando<SubtitleTimelineIndex> _subtitleIndexes = Expando();
 
   /// 缓存指纹：path -> "size:mtime"，用于检测字幕文件内容变化
@@ -368,9 +369,23 @@ class SubtitleManager extends ChangeNotifier {
   }
 
   // 异步预加载字幕文件
-  Future<void> preloadSubtitleFile(String path) async {
+  Future<void> preloadSubtitleFile(String path) {
+    path = canonicalSubtitlePath(path);
+    final pending = _subtitlePreloadTasks[path];
+    if (pending != null) return pending;
+
+    late final Future<void> task;
+    task = _preloadSubtitleFile(path).whenComplete(() {
+      if (identical(_subtitlePreloadTasks[path], task)) {
+        _subtitlePreloadTasks.remove(path);
+      }
+    });
+    _subtitlePreloadTasks[path] = task;
+    return task;
+  }
+
+  Future<void> _preloadSubtitleFile(String path) async {
     try {
-      path = canonicalSubtitlePath(path);
       final file = File(path);
       if (!await file.exists()) return;
       // 缓存指纹：文件大小+修改时间，字幕文件变化后强制重新解析

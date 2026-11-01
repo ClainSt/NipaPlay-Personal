@@ -12,6 +12,7 @@ import 'package:nipaplay/constants/settings_keys.dart';
 import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/full_backup_service.dart';
 import 'package:nipaplay/services/incremental_sync_repository.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/adaptive_media_detail_action.dart';
@@ -22,9 +23,31 @@ import 'package:nipaplay/themes/nipaplay/widgets/immersive_episode_rail.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/immersive_media_detail_route.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/immersive_portrait_backdrop_color.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+class _TestPaths extends PathProviderPlatform {
+  _TestPaths(this.path);
+
+  final String path;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => path;
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  const secureStorageChannel =
+      MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+  setUp(() {
+    messenger.setMockMethodCallHandler(secureStorageChannel, (_) async => null);
+  });
+
+  tearDown(() {
+    messenger.setMockMethodCallHandler(secureStorageChannel, null);
+  });
 
   test('immersive anime detail lab switch defaults to disabled', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -317,6 +340,15 @@ void main() {
       () async {
     const animeId = -991234;
     const backgroundUrl = 'https://example.com/custom-background.jpg';
+    final supportDirectory =
+        await Directory.systemTemp.createTemp('anime_backup_support_');
+    final previousPaths = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _TestPaths(supportDirectory.path);
+    addTearDown(() async {
+      await CloudMediaIndexDatabase.instance.close();
+      PathProviderPlatform.instance = previousPaths;
+      await supportDirectory.delete(recursive: true);
+    });
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final anime = BangumiAnime(
       id: animeId,
