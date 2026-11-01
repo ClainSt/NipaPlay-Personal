@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -75,6 +76,33 @@ class _SeriesRootWebDavService extends WebDAVService {
   }
 }
 
+String _propfindResource(
+  String href, {
+  bool isDirectory = false,
+  int size = 0,
+  String contentType = '',
+}) =>
+    '''
+    <d:response>
+      <d:href>$href</d:href>
+      <d:propstat>
+        <d:prop>
+          <d:displayname/>
+          <d:resourcetype>${isDirectory ? '<d:collection/>' : ''}</d:resourcetype>
+          <d:getcontentlength>$size</d:getcontentlength>
+          <d:getcontenttype>$contentType</d:getcontenttype>
+          <d:getetag>"sample-etag"</d:getetag>
+          <d:getlastmodified>Sun, 01 Nov 2026 00:00:00 GMT</d:getlastmodified>
+        </d:prop>
+        <d:status>HTTP/1.1 200 OK</d:status>
+      </d:propstat>
+    </d:response>
+  ''';
+
+String _propfindDocument(List<String> resources) =>
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<d:multistatus xmlns:d="DAV:">${resources.join()}</d:multistatus>';
+
 void main() {
   group('CloudMediaScanner filename metadata', () {
     test('recursive scan only enumerates WebDAV directories', () async {
@@ -99,6 +127,73 @@ void main() {
           '{tmdbid=100565}/[VCB-Studio] Anime Title [01].mkv');
       expect(webDav.requestedFileBytes, isEmpty,
           reason: 'catalog scans must not GET video content');
+    });
+
+    test('HTTP scan sends PROPFIND metadata requests and no video GET',
+        () async {
+      final requests = <({String method, String path, String? range})>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serverSubscription = server.listen((request) async {
+        requests.add((
+          method: request.method,
+          path: Uri.decodeComponent(request.uri.path),
+          range: request.headers.value(HttpHeaders.rangeHeader),
+        ));
+        if (request.method != 'PROPFIND') {
+          request.response.statusCode = HttpStatus.methodNotAllowed;
+          await request.response.close();
+          return;
+        }
+
+        final path = Uri.decodeComponent(request.uri.path);
+        final resources = path.endsWith('/library/')
+            ? [
+                _propfindResource('/dav/library/', isDirectory: true),
+                _propfindResource(
+                  '/dav/library/{tmdbid=100565}/',
+                  isDirectory: true,
+                ),
+              ]
+            : [
+                _propfindResource(
+                  '/dav/library/{tmdbid=100565}/',
+                  isDirectory: true,
+                ),
+                _propfindResource(
+                  '/dav/library/{tmdbid=100565}/[VCB-Studio] Anime Title [01].mkv',
+                  size: 2048,
+                  contentType: 'video/x-matroska',
+                ),
+              ];
+        request.response.statusCode = 207;
+        request.response.headers.contentType =
+            ContentType('application', 'xml', charset: 'utf-8');
+        request.response.write(_propfindDocument(resources));
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await serverSubscription.cancel();
+        await server.close(force: true);
+      });
+
+      final scanner = CloudMediaScanner(webDav: WebDAVService.forTesting());
+      final result = await scanner.scan(
+        connection: WebDAVConnection(
+          name: 'local-test-server',
+          url: 'http://${server.address.address}:${server.port}/dav',
+          username: '',
+          password: '',
+        ),
+        rootPath: '/library',
+      );
+
+      expect(result.assets, hasLength(1));
+      expect(result.assets.single.tmdbId, 100565);
+      expect(result.assets.single.episodeNumber, 1);
+      expect(requests, hasLength(2));
+      expect(requests.every((request) => request.method == 'PROPFIND'), isTrue);
+      expect(requests.every((request) => request.range == null), isTrue);
+      expect(requests.any((request) => request.path.endsWith('.mkv')), isFalse);
     });
 
     test('a selected series root keeps seasons under one work key', () async {
