@@ -2873,7 +2873,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       );
       if (!mounted) return;
       BlurSnackBar.show(context,
-          '云媒体库扫描完成：${result.assets.length} 个文件；视频内容未读取');
+          '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
+          '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容');
       await _showCloudMediaIndex();
     } catch (error) {
       if (mounted) BlurSnackBar.show(context, '云媒体库扫描失败：$error');
@@ -2889,35 +2890,82 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     try {
       final rows = await CloudMediaIndexDatabase.instance
           .getAssets(sourceId: connection.id);
+      final works = await CloudMediaIndexDatabase.instance
+          .getWorks(sourceId: connection.id);
       if (!mounted) return;
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('云媒体索引（${rows.length}）'),
+          title: Text('云媒体索引（${works.length} 部作品 · ${rows.length} 个文件）'),
           content: SizedBox(
             width: 720,
             height: 520,
             child: rows.isEmpty
                 ? const Center(child: Text('此 WebDAV 来源尚无扫描索引'))
-                : ListView.separated(
-                    itemCount: rows.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final row = rows[index];
-                      final id = row['tmdb_id'];
-                      final episode = row['episode_number'];
-                      return ListTile(
-                        dense: true,
-                        title: Text(row['name']?.toString() ?? ''),
-                        subtitle: Text(
-                          '${row['category']} · ${row['relative_path']}'
-                          '${id == null ? '' : ' · TMDB $id'}'
-                          '${episode == null ? '' : ' · 第 $episode 集'}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                : Column(
+                    children: [
+                      if (works.isNotEmpty)
+                        SizedBox(
+                          height: 126,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: works.length,
+                            itemBuilder: (context, index) {
+                              final work = works[index];
+                              final poster = work['poster_url']?.toString();
+                              return SizedBox(
+                                width: 118,
+                                child: Card(
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Column(
+                                    children: [
+                                      Expanded(
+                                        child: poster?.startsWith('http') == true
+                                            ? Image.network(poster!, fit: BoxFit.cover, width: double.infinity,
+                                                errorBuilder: (_, __, ___) => const Icon(Icons.movie_outlined))
+                                            : const Center(child: Icon(Icons.movie_outlined)),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.all(4),
+                                        child: Text(
+                                          (work['title_cn']?.toString().isNotEmpty == true
+                                                  ? work['title_cn']
+                                                  : work['title'])
+                                              .toString(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                      );
-                    },
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: rows.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final row = rows[index];
+                            final id = row['tmdb_id'];
+                            final episode = row['episode_number'];
+                            return ListTile(
+                              dense: true,
+                              title: Text(row['name']?.toString() ?? ''),
+                              subtitle: Text(
+                                '${row['category']} · ${row['relative_path']}'
+                                '${id == null ? '' : ' · TMDB $id'}'
+                                '${episode == null ? '' : ' · 第 $episode 集'}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
           ),
           actions: [

@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:nipaplay/models/bangumi_model.dart';
+import 'package:nipaplay/utils/anime_info_parse.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Private, app-local catalog database used by the cloud library feature.
@@ -22,7 +25,7 @@ class CloudMediaIndexDatabase {
         '${support.path}${Platform.pathSeparator}cloud_media_library.db';
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, _) async {
         await db.execute('''
         CREATE TABLE cloud_media_asset (
@@ -50,9 +53,33 @@ class CloudMediaIndexDatabase {
           'CREATE INDEX cloud_media_asset_work_key_index '
           'ON cloud_media_asset(source_id, work_key)',
         );
+        await _createWorkTable(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await _createWorkTable(db);
       },
     );
   }
+
+  Future<void> _createWorkTable(DatabaseExecutor db) => db.execute('''
+    CREATE TABLE cloud_media_work (
+      source_id TEXT NOT NULL,
+      work_key TEXT NOT NULL,
+      tmdb_id INTEGER,
+      dandanplay_anime_id INTEGER,
+      bangumi_id INTEGER,
+      title TEXT NOT NULL,
+      title_cn TEXT NOT NULL,
+      overview TEXT,
+      poster_url TEXT,
+      rating REAL,
+      metadata_json TEXT,
+      metadata_status TEXT NOT NULL DEFAULT 'pending',
+      relation_locked INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (source_id, work_key)
+    )
+  ''');
 
   Future<void> upsertAssets(List<Map<String, Object?>> assets) async {
     final db = await database;
@@ -114,5 +141,86 @@ class CloudMediaIndexDatabase {
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'relative_path COLLATE NOCASE',
     );
+  }
+
+  Future<void> upsertWorkMetadata({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required Map<String, dynamic> response,
+    required BangumiAnime anime,
+  }) async {
+    final db = await database;
+    final bangumi = response['bangumi'];
+    final rawAnimeId =
+        bangumi is Map ? bangumi['animeId'] : response['animeId'];
+    await db.rawInsert('''
+      INSERT INTO cloud_media_work
+        (source_id, work_key, tmdb_id, dandanplay_anime_id, title, title_cn,
+         bangumi_id, overview, poster_url, rating, metadata_json, metadata_status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'matched', ?)
+      ON CONFLICT(source_id, work_key) DO UPDATE SET
+        tmdb_id=excluded.tmdb_id,
+        dandanplay_anime_id=excluded.dandanplay_anime_id,
+        bangumi_id=excluded.bangumi_id,
+        title=excluded.title, title_cn=excluded.title_cn,
+        overview=excluded.overview, poster_url=excluded.poster_url,
+        rating=excluded.rating, metadata_json=excluded.metadata_json,
+        metadata_status='matched', updated_at=excluded.updated_at
+      WHERE cloud_media_work.relation_locked=0
+    ''', [
+      sourceId,
+      workKey,
+      tmdbId,
+      int.tryParse(rawAnimeId?.toString() ?? ''),
+      anime.name,
+      anime.nameCn,
+      bangumi is Map<String, dynamic>
+          ? AnimeInfoParse.getBangumiTvId(bangumi)
+          : null,
+      anime.summary,
+      anime.imageUrl,
+      anime.rating,
+      jsonEncode(response),
+      DateTime.now().toUtc().toIso8601String(),
+    ]);
+  }
+
+  Future<List<Map<String, Object?>>> getWorks({String? sourceId}) async {
+    final db = await database;
+    return db.query(
+      'cloud_media_work',
+      where: sourceId == null ? null : 'source_id = ?',
+      whereArgs: sourceId == null ? null : [sourceId],
+      orderBy: 'title_cn COLLATE NOCASE, title COLLATE NOCASE',
+    );
+  }
+
+  Future<void> upsertPendingWork({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String title,
+  }) async {
+    final db = await database;
+    await db.rawInsert('''
+      INSERT INTO cloud_media_work
+        (source_id, work_key, tmdb_id, title, title_cn, metadata_status, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+      ON CONFLICT(source_id, work_key) DO UPDATE SET
+        tmdb_id=COALESCE(cloud_media_work.tmdb_id, excluded.tmdb_id),
+        title=CASE WHEN cloud_media_work.title='' THEN excluded.title ELSE cloud_media_work.title END,
+        title_cn=CASE WHEN cloud_media_work.title_cn='' THEN excluded.title_cn ELSE cloud_media_work.title_cn END,
+        metadata_status=CASE WHEN cloud_media_work.metadata_status='matched' THEN 'matched' ELSE 'pending' END,
+        updated_at=excluded.updated_at
+      WHERE cloud_media_work.relation_locked=0
+    ''', [
+      sourceId,
+      workKey,
+      tmdbId,
+      title,
+      title,
+      DateTime.now().toUtc().toIso8601String(),
+    ]);
   }
 }

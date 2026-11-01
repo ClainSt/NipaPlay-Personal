@@ -1,5 +1,9 @@
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
+import 'package:nipaplay/services/cloud_media_scraper.dart';
+import 'package:nipaplay/services/cloud_media_models.dart';
+
+export 'package:nipaplay/services/cloud_media_models.dart';
 
 /// Read-only WebDAV catalog scan. It only enumerates directories via PROPFIND;
 /// it never opens media files or requests video byte ranges.
@@ -110,7 +114,14 @@ class CloudMediaScanner {
           )
           .toList(),
     );
-    return result;
+    final scrapeResult = await CloudMediaScraper().scrape(
+      sourceId: connection.id,
+      assets: result.assets,
+    );
+    return result.copyWith(
+      matchedWorks: scrapeResult.matched,
+      failedWorks: scrapeResult.failed,
+    );
   }
 
   static String? _kind(String name) {
@@ -217,35 +228,4 @@ class CloudMediaScanner {
         ? normalizedPath.substring(root.length + 1)
         : normalizedPath.replaceFirst(RegExp(r'^/'), '');
   }
-}
-
-class CloudMediaScanResult {
-  const CloudMediaScanResult({required this.rootPath, required this.assets});
-  final String rootPath;
-  final List<CloudMediaAsset> assets;
-}
-
-class CloudMediaAsset {
-  const CloudMediaAsset({
-    required this.sourceId,
-    required this.relativePath,
-    required this.workKey,
-    required this.name,
-    required this.kind,
-    required this.category,
-    this.size,
-    this.modified,
-    this.tmdbId,
-    this.episodeNumber,
-  });
-  final String sourceId;
-  final String relativePath;
-  final String workKey;
-  final String name;
-  final String kind;
-  final String category;
-  final int? size;
-  final DateTime? modified;
-  final int? tmdbId;
-  final int? episodeNumber;
 }
