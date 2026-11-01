@@ -821,15 +821,23 @@ class AutoSyncService extends ChangeNotifier {
       modifiedAt: now,
       deviceId: 'local',
     );
-    final remoteKeys = {
+    final remoteOperationsByIdentity = {
       for (final operation in remoteChanges)
-        '${operation.category}\u0000${operation.key}',
+        '${operation.category}\u0000${operation.key}': operation,
     };
     final acceptedLocalChanges = <IncrementalSyncOperation>[];
     for (final operation in localChanges) {
       final identity = '${operation.category}\u0000${operation.key}';
-      if (!remoteKeys.contains(identity)) {
+      final remoteOperation = remoteOperationsByIdentity[identity];
+      if (remoteOperation == null) {
         acceptedLocalChanges.add(operation);
+        continue;
+      }
+      if (_isManualCloudAssetRelation(remoteOperation) &&
+          !_isManualCloudAssetRelation(operation)) {
+        // A locked manual classification from another device must survive a
+        // stale automatic rescan on this device. The separate relation-history
+        // entities remain in the merged state for undo and conflict review.
         continue;
       }
       if (operation.category == BackupCategory.watchHistory.name &&
@@ -848,6 +856,13 @@ class AutoSyncService extends ChangeNotifier {
     }
     return IncrementalSyncCodec.applyOperations(remote, acceptedLocalChanges);
   }
+
+  bool _isManualCloudAssetRelation(IncrementalSyncOperation operation) =>
+      operation.category == BackupCategory.mediaLibraries.name &&
+      operation.key.startsWith('cloudMediaIndex:asset:') &&
+      !operation.deleted &&
+      operation.value is Map &&
+      operation.value['relation_locked'] == 1;
 
   bool _localWatchRecordIsNewer(dynamic local, dynamic remote) {
     if (local is! Map) return false;

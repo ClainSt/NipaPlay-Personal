@@ -238,6 +238,18 @@ class IncrementalSyncCodec {
           final preferences = _asStringMap(backup[name]);
           state[name] = _asStringMap(preferences['settings']);
         case BackupCategory.mediaLibraries:
+          final mediaLibraries = _asStringMap(backup[name]);
+          final cloudMediaIndex = _asStringMap(
+            mediaLibraries.remove('cloudMediaIndex'),
+          );
+          final records = <String, dynamic>{...mediaLibraries};
+          for (final entry in cloudMediaIndex.entries) {
+            final key = entry.key.startsWith('cloudMediaIndex:')
+                ? entry.key
+                : 'cloudMediaIndex:${entry.key}';
+            records[key] = entry.value;
+          }
+          state[name] = records;
         case BackupCategory.accounts:
           state[name] = _asStringMap(backup[name]);
         case BackupCategory.watchHistory:
@@ -277,6 +289,7 @@ class IncrementalSyncCodec {
         case BackupCategory.mediaLibraries:
           final mediaLibraries = <String, dynamic>{};
           final webDavConnections = <dynamic>[];
+          final cloudMediaIndex = <String, dynamic>{};
           for (final valueEntry in entry.value.entries) {
             if (IncrementalSyncWebDavConnections.isConnectionKey(
               valueEntry.key,
@@ -295,10 +308,30 @@ class IncrementalSyncCodec {
               if (legacy is List) webDavConnections.addAll(legacy);
               continue;
             }
+            if (valueEntry.key.startsWith('cloudMediaIndex:')) {
+              cloudMediaIndex[valueEntry.key] = valueEntry.value;
+              continue;
+            }
+            if (valueEntry.key == 'cloudMediaIndex' &&
+                valueEntry.value is Map) {
+              // Read repositories created before cloud catalog entities were
+              // flattened into individual incremental records.
+              final legacyRecords = _asStringMap(valueEntry.value);
+              for (final record in legacyRecords.entries) {
+                final key = record.key.startsWith('cloudMediaIndex:')
+                    ? record.key
+                    : 'cloudMediaIndex:${record.key}';
+                cloudMediaIndex[key] = record.value;
+              }
+              continue;
+            }
             mediaLibraries[valueEntry.key] = valueEntry.value;
           }
           if (webDavConnections.isNotEmpty) {
             mediaLibraries['webdavConnections'] = webDavConnections;
+          }
+          if (cloudMediaIndex.isNotEmpty) {
+            mediaLibraries['cloudMediaIndex'] = cloudMediaIndex;
           }
           backup[entry.key] = mediaLibraries;
         case BackupCategory.accounts:

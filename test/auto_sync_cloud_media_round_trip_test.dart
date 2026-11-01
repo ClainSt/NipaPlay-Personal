@@ -174,6 +174,16 @@ void main() {
     final mapping = await database.getLibraryRoot(sourceId);
     expect(mapping?['connection_id'], 'device-b-webdav-connection');
     expect(mapping?['root_path'], '/android/mounted/anime');
+    final manualWorkKey = await database.createManualWork(
+      sourceId: sourceId,
+      title: 'Manually linked work on device B',
+    );
+    await database.updateAssetRelation(
+      sourceId: sourceId,
+      relativePath: 'Show/SPs/NCOP.mkv',
+      workKey: manualWorkKey,
+      category: 'extra',
+    );
     await deviceBService.manualSync();
     final republishedBytes = transport.files.values
         .map((bytes) => utf8.decode(bytes, allowMalformed: true))
@@ -181,5 +191,37 @@ void main() {
     expect(republishedBytes, isNot(contains('device-b-webdav-connection')));
     expect(republishedBytes, isNot(contains('/android/mounted/anime')));
     deviceBService.dispose();
+
+    await database.close();
+    PathProviderPlatform.instance = _TestPaths(deviceA.path);
+    await database.upsertAssets([
+      {
+        'source_id': sourceId,
+        'relative_path': 'Show/SPs/NCOP.mkv',
+        'name': 'NCOP.mkv',
+        'kind': 'video',
+        'category': 'episode',
+        'work_key': 'tmdb-tv-100565',
+        'size': 4096,
+        'modified_at': '2026-11-01T00:00:00Z',
+        'tmdb_id': 100565,
+        'tmdb_type': 'tv',
+      },
+    ]);
+    final deviceARefresh = AutoSyncService.forTesting(
+      transportFactory: ({
+        required serverUrl,
+        required username,
+        required password,
+      }) =>
+          transport,
+    );
+    await deviceARefresh.manualSync();
+    final mergedAsset = (await database.getAssets(sourceId: sourceId)).single;
+    expect(mergedAsset['work_key'], manualWorkKey);
+    expect(mergedAsset['category'], 'extra');
+    expect(mergedAsset['relation_locked'], 1);
+    expect(await database.getWorks(sourceId: sourceId), hasLength(2));
+    deviceARefresh.dispose();
   });
 }
