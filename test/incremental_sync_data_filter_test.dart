@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nipaplay/services/backup_category.dart';
 import 'package:nipaplay/services/incremental_sync_data_filter.dart';
+import 'package:nipaplay/services/incremental_sync_repository.dart';
 
 void main() {
   test(
@@ -42,6 +44,25 @@ void main() {
           'relative_path': 'Show/01.mkv',
         },
       },
+      'watchHistory': [
+        {
+          'filePath': 'webdav://windows-connection/Anime/Show/01.mkv',
+          'mediaKey': 'cloudmedia:logical-source:/Show/01.mkv',
+          'lastWatchTime': '2026-11-02T00:00:00Z',
+          'lastPosition': 125000,
+          'duration': 1440000,
+          'watchProgress': 0.08,
+          'animeName': 'Show',
+        },
+      ],
+      'episodeMatches': [
+        {
+          'filePath': 'webdav://windows-connection/Anime/Show/01.mkv',
+          'mediaKey': 'cloudmedia:logical-source:/Show/01.mkv',
+          'animeId': 23,
+          'episodeId': 101,
+        },
+      ],
     });
 
     final encoded = sanitized.toString();
@@ -61,5 +82,20 @@ void main() {
     expect(encoded, contains('cloudMediaIndex:root:logical-id'));
     expect(encoded, contains('Show/01.mkv'));
     expect(encoded, contains('dark'));
+    expect(encoded, contains('lastPosition'));
+    expect(encoded, isNot(contains('windows-connection')));
+    expect((sanitized['episodeMatches'] as List), isEmpty);
+    final watchState = IncrementalSyncCodec.flattenBackup(
+      sanitized,
+      {BackupCategory.watchHistory},
+    );
+    expect(
+      watchState[BackupCategory.watchHistory.name]!.keys,
+      contains('cloudmedia:logical-source:/Show/01.mkv'),
+    );
+    final syncedWatch = watchState[BackupCategory.watchHistory.name]![
+        'cloudmedia:logical-source:/Show/01.mkv'] as Map;
+    expect(syncedWatch['filePath'], startsWith('cloudmedia://asset/'));
+    expect(syncedWatch['lastPosition'], 125000);
   });
 }

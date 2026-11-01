@@ -409,6 +409,8 @@ class IncrementalSyncCodec {
   }
 
   static String _recordKey(Map<String, dynamic> record) {
+    final mediaKey = record['mediaKey']?.toString();
+    if (mediaKey != null && mediaKey.isNotEmpty) return mediaKey;
     final path = record['filePath']?.toString();
     if (path != null && path.isNotEmpty) return path;
     final videoHash = record['videoHash']?.toString();

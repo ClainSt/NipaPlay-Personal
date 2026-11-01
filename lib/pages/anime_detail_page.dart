@@ -11,6 +11,7 @@ import 'package:nipaplay/services/quarterly_review_cache.dart';
 import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/models/shared_remote_library.dart';
 import 'package:nipaplay/models/watch_history_model.dart';
+import 'package:nipaplay/models/media_identity.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 // import 'package:nipaplay/themes/nipaplay/widgets/translation_button.dart'; // Removed
 import 'package:kmbal_ionicons/kmbal_ionicons.dart';
@@ -1085,15 +1086,25 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final anime = _detailedAnime;
     final title =
         anime?.nameCn.isNotEmpty == true ? anime!.nameCn : anime?.name ?? '云媒体';
+    final relativeIdentity = asset['relative_path']?.toString() ?? '';
+    final cloudMediaKey = MediaIdentity.remotePathKey(
+      source: 'cloudmedia',
+      connectionId: sourceId,
+      rawPath: relativeIdentity,
+    );
+    final previousHistory =
+        await WatchHistoryManager.getHistoryByMediaKey(cloudMediaKey);
+    if (!mounted || !assetContext.mounted) return;
     final history = WatchHistoryItem(
       filePath: filePath,
       animeName: title,
       episodeTitle: name,
       animeId: widget.animeId,
-      duration: 0,
-      lastPosition: 0,
-      watchProgress: 0,
-      lastWatchTime: DateTime.now(),
+      duration: previousHistory?.duration ?? 0,
+      lastPosition: previousHistory?.lastPosition ?? 0,
+      watchProgress: previousHistory?.watchProgress ?? 0,
+      lastWatchTime: previousHistory?.lastWatchTime ?? DateTime.now(),
+      mediaKey: cloudMediaKey,
     );
     final didStart = await PlaybackService().play(PlayableItem(
       videoPath: filePath,
@@ -1101,6 +1112,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       subtitle: name,
       animeId: widget.animeId,
       historyItem: history,
+      mediaKey: cloudMediaKey,
     ));
     if (didStart) _dismissDetailIfNeeded();
   }

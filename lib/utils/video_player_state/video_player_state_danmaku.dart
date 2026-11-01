@@ -776,7 +776,8 @@ extension VideoPlayerStateDanmaku on VideoPlayerState {
             exportList.add(DanmakuTrackTiming.shift(item, offset));
           } else if (item is Map) {
             exportList.add(DanmakuTrackTiming.shift(
-              Map<String, dynamic>.from(item), offset,
+              Map<String, dynamic>.from(item),
+              offset,
             ));
           }
         }
@@ -1483,6 +1484,7 @@ extension VideoPlayerStateDanmaku on VideoPlayerState {
           lastWatchTime: DateTime.now(),
           thumbnailPath: thumbnailPath ?? _initialHistoryItem?.thumbnailPath,
           isFromScan: existingHistory.isFromScan,
+          mediaKey: _currentMediaKey ?? _initialHistoryItem?.mediaKey,
         );
 
         // Jellyfin同步：如果是Jellyfin流媒体，同步播放进度（每秒同步一次）
@@ -1564,6 +1566,7 @@ extension VideoPlayerStateDanmaku on VideoPlayerState {
           lastWatchTime: DateTime.now(),
           thumbnailPath: thumbnailPath,
           isFromScan: false,
+          mediaKey: _currentMediaKey ?? _initialHistoryItem?.mediaKey,
         );
 
         // 通过 Provider 添加记录
@@ -1709,7 +1712,8 @@ extension VideoPlayerStateDanmaku on VideoPlayerState {
       _updateMergedDanmakuList(
         preserveOverlay: true,
         locallySentDanmaku: DanmakuTrackTiming.shift(
-          localDanmaku, danmakuTrackOffset(trackId),
+          localDanmaku,
+          danmakuTrackOffset(trackId),
         ),
         locallySentTrackEnabled: _danmakuTrackEnabled[trackId] == true,
       );

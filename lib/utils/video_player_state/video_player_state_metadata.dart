@@ -74,6 +74,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
         lastWatchTime: DateTime.now(),
         thumbnailPath: existingHistory.thumbnailPath,
         isFromScan: existingHistory.isFromScan,
+        mediaKey: existingHistory.mediaKey ?? _currentMediaKey,
       );
 
       // 保存更新后的记录
@@ -498,6 +499,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
           duration: _duration.inMilliseconds,
           lastWatchTime: DateTime.now(),
           isFromScan: false,
+          mediaKey: _currentMediaKey,
         );
       }
 
@@ -580,6 +582,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
         lastWatchTime: existingHistory.lastWatchTime, // 保留上次观看时间，直到真正播放并更新进度
         thumbnailPath: existingHistory.thumbnailPath,
         isFromScan: existingHistory.isFromScan,
+        mediaKey: existingHistory.mediaKey ?? _currentMediaKey,
       );
 
       debugPrint(
@@ -688,6 +691,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
           lastWatchTime: DateTime.now(),
           thumbnailPath: thumbnailPath,
           isFromScan: existingHistory.isFromScan,
+          mediaKey: existingHistory.mediaKey ?? _currentMediaKey,
         );
 
         // 保存更新后的记录

@@ -691,6 +691,7 @@ extension JellyfinQualitySwitch on VideoPlayerState {
         duration: currentDuration.inMilliseconds,
         watchProgress: currentProgress,
         lastWatchTime: DateTime.now(),
+        mediaKey: _currentMediaKey,
       );
 
       // 计算新的播放会话（应用清晰度 + 可选服务器字幕/烧录参数）
@@ -866,6 +867,7 @@ extension EmbyQualitySwitch on VideoPlayerState {
       duration: currentDuration.inMilliseconds,
       watchProgress: currentProgress,
       lastWatchTime: DateTime.now(),
+      mediaKey: _currentMediaKey,
     );
 
     Future<void> restorePlaybackState() async {

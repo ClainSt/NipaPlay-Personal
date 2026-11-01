@@ -56,12 +56,28 @@ class IncrementalSyncDataFilter {
                 record is Map &&
                 !isDeviceLocalRecord(record, localLibraryRoots) &&
                 !_isDeletedAnimeRecord(record, deletedAnimeIds) &&
+                (isWatchHistory || !_isCloudCatalogRecord(record)) &&
                 (!isWatchHistory || !_isUnknownAnimePlaceholder(record)))
-            .toList();
+            .map((record) {
+          if (!isWatchHistory || record is! Map) return record;
+          final normalized = Map<String, dynamic>.from(record);
+          final mediaKey = normalized['mediaKey']?.toString() ?? '';
+          if (mediaKey.startsWith('cloudmedia:')) {
+            // Keep a stable sync placeholder instead of publishing the
+            // originating device's WebDAV connection ID or file URL.
+            normalized['filePath'] =
+                'cloudmedia://asset/${Uri.encodeComponent(mediaKey)}';
+          }
+          return normalized;
+        }).toList();
       }
     }
     return result;
   }
+
+  static bool _isCloudCatalogRecord(dynamic record) =>
+      record is Map &&
+      record['mediaKey']?.toString().startsWith('cloudmedia:') == true;
 
   /// 将番剧删除墓碑注入展平后的增量同步状态（watchHistory 分类下的
   /// `deletedAnime:<animeId>` 特殊条目），使删除意图随 diff 传播：

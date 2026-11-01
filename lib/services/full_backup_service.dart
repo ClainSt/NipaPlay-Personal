@@ -376,6 +376,7 @@ class FullBackupService {
       'lastWatchTime': item.lastWatchTime.toIso8601String(),
       'isFromScan': item.isFromScan,
       'videoHash': item.videoHash,
+      'mediaKey': item.mediaKey,
     };
     if (includeThumbnail && item.thumbnailPath != null) {
       try {
@@ -410,6 +411,7 @@ class FullBackupService {
                 'animeId': item.animeId,
                 'videoHash': item.videoHash,
                 'isFromScan': item.isFromScan,
+                'mediaKey': item.mediaKey,
               })
           .toList();
 
@@ -973,6 +975,7 @@ class FullBackupService {
                 DateTime.parse(recordData['lastWatchTime'] as String),
             isFromScan: recordData['isFromScan'] as bool? ?? false,
             videoHash: recordData['videoHash'] as String?,
+            mediaKey: recordData['mediaKey'] as String?,
           );
 
           // 恢复截图
