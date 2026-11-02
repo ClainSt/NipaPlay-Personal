@@ -5,6 +5,7 @@ import 'package:nipaplay/app/app_display_surface.dart';
 import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/app/unified_media_library_sections.dart';
 import 'package:nipaplay/media_library/adaptive_media_collection_view.dart';
+import 'package:nipaplay/media_library/cloud_media_catalog_collection_view.dart';
 import 'package:nipaplay/media_library/media_source_option.dart';
 import 'package:nipaplay/media_library/unified_library_management_model.dart';
 import 'package:nipaplay/models/watch_history_model.dart';
@@ -214,7 +215,8 @@ class _TelevisionMediaLibrarySectionBar extends material.StatefulWidget {
 class _TelevisionMediaLibrarySectionBarState
     extends material.State<_TelevisionMediaLibrarySectionBar> {
   late final material.FocusNode _focusNode;
-  final material.ScrollController _scrollController = material.ScrollController();
+  final material.ScrollController _scrollController =
+      material.ScrollController();
 
   @override
   void initState() {
@@ -286,8 +288,7 @@ class _TelevisionMediaLibrarySectionBarState
           scrollDirection: material.Axis.horizontal,
           physics: const material.ClampingScrollPhysics(),
           itemCount: widget.sections.length,
-          separatorBuilder: (_, __) =>
-              const material.SizedBox(width: 8),
+          separatorBuilder: (_, __) => const material.SizedBox(width: 8),
           itemBuilder: (context, index) {
             final section = widget.sections[index];
             final selected = section.id == widget.selectedSection.id;
@@ -327,7 +328,8 @@ class _TelevisionMediaLibrarySectionButton extends material.StatelessWidget {
       onTap: onPressed,
       child: material.AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const material.EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        padding:
+            const material.EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         decoration: material.BoxDecoration(
           color: background,
           borderRadius: material.BorderRadius.circular(9),
@@ -373,6 +375,37 @@ class AdaptiveMediaLibrarySectionContent extends material.StatelessWidget {
   @override
   material.Widget build(material.BuildContext context) {
     if (section.contentType == UnifiedMediaLibraryContentType.mediaCollection) {
+      if (section.source == UnifiedMediaLibrarySource.webdav) {
+        return material.DefaultTabController(
+          length: 2,
+          child: material.Column(
+            children: [
+              const material.TabBar(
+                tabs: [
+                  material.Tab(text: '云媒体库'),
+                  material.Tab(text: '观看记录'),
+                ],
+              ),
+              material.Expanded(
+                child: material.TabBarView(
+                  children: [
+                    CloudMediaCatalogCollectionView(
+                      onPlayEpisode: onPlayEpisode,
+                    ),
+                    AdaptiveMediaCollectionView(
+                      key: material.ValueKey<String>(
+                        'collection-history-${section.id}',
+                      ),
+                      source: section.source!,
+                      onPlayEpisode: onPlayEpisode,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
       return AdaptiveMediaCollectionView(
         key: material.ValueKey<String>('collection-${section.id}'),
         source: section.source!,

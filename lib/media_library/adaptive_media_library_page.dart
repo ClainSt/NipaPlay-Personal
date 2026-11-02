@@ -221,6 +221,12 @@ class _AdaptiveMediaLibraryPageState extends State<AdaptiveMediaLibraryPage> {
             AppDisplaySurfaceScope.of(context) == AppDisplaySurface.television,
       );
 
+  bool _hasConfiguredWebDAV(SharedRemoteLibraryProvider sharedProvider) =>
+      kIsWeb
+          ? sharedProvider.webdavConnections.isNotEmpty
+          : _connectionsInitialized &&
+              WebDAVService.instance.connections.isNotEmpty;
+
   /// 构建当前可用的媒体库分区列表（与 build() 中逻辑一致）。
   List<UnifiedMediaLibrarySection> _buildCurrentSections() {
     // 需要从 Provider 读取状态，这里用与 build 相同的 Consumer 逻辑
@@ -235,11 +241,14 @@ class _AdaptiveMediaLibraryPageState extends State<AdaptiveMediaLibraryPage> {
       buildUnifiedMediaLibrarySections(
         MediaLibraryAvailability(
           showLocal: _showLocalMediaLibrary(),
-          showWebDAVLibrary: watchHistoryProvider.isLoaded &&
-              mediaLibraryHasItemsForSource(
-                watchHistoryProvider.history,
-                UnifiedMediaLibrarySource.webdav,
-              ),
+          showWebDAVLibrary: shouldExposeWebDAVMediaLibrary(
+            historyLoaded: watchHistoryProvider.isLoaded,
+            hasWatchHistory: mediaLibraryHasItemsForSource(
+              watchHistoryProvider.history,
+              UnifiedMediaLibrarySource.webdav,
+            ),
+            hasConfiguredConnection: _hasConfiguredWebDAV(sharedProvider),
+          ),
           showWebDAVManagement: kIsWeb
               ? sharedProvider.webdavConnections.isNotEmpty
               : _connectionsInitialized &&
@@ -297,11 +306,14 @@ class _AdaptiveMediaLibraryPageState extends State<AdaptiveMediaLibraryPage> {
           buildUnifiedMediaLibrarySections(
             MediaLibraryAvailability(
               showLocal: _showLocalMediaLibrary(),
-              showWebDAVLibrary: watchHistoryProvider.isLoaded &&
-                  mediaLibraryHasItemsForSource(
-                    watchHistoryProvider.history,
-                    UnifiedMediaLibrarySource.webdav,
-                  ),
+              showWebDAVLibrary: shouldExposeWebDAVMediaLibrary(
+                historyLoaded: watchHistoryProvider.isLoaded,
+                hasWatchHistory: mediaLibraryHasItemsForSource(
+                  watchHistoryProvider.history,
+                  UnifiedMediaLibrarySource.webdav,
+                ),
+                hasConfiguredConnection: _hasConfiguredWebDAV(sharedProvider),
+              ),
               showWebDAVManagement: kIsWeb
                   ? sharedProvider.webdavConnections.isNotEmpty
                   : _connectionsInitialized &&

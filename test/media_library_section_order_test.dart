@@ -57,6 +57,25 @@ const _sections = <UnifiedMediaLibrarySection>[
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  test('configured WebDAV exposes its media library without watch history', () {
+    expect(
+      shouldExposeWebDAVMediaLibrary(
+        historyLoaded: true,
+        hasWatchHistory: false,
+        hasConfiguredConnection: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldExposeWebDAVMediaLibrary(
+        historyLoaded: true,
+        hasWatchHistory: false,
+        hasConfiguredConnection: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('saved section order ignores stale ids and appends new media sources',
       () {
     final ordered = applyMediaLibrarySectionOrder(
