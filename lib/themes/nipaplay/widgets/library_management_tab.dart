@@ -6985,6 +6985,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                 '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；视频内容读取 0 次';
             _finishRemoteScrape(summary);
             BlurSnackBar.show(context, summary);
+            await _showCloudMediaIndex(libraryId: result.libraryId);
             return;
           }
         }
