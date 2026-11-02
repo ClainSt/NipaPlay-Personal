@@ -60,9 +60,9 @@ Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`�
 
 | 项目 | 结果 | 验证依据 |
 | --- | --- | --- |
-| 自动化测试 | 通过 | `flutter test --no-pub --reporter json`：1,520 个测试事件，37 项跳过、0 项失败；包含 WebDAV 请求拦截、递归扫描中途失败保留旧索引、特典标签优先于集数分类、媒体索引同步往返、人工关联冲突，以及 CDs 本地/WebDAV 路径、自然排序和 CUE 起播位置回归用例。 |
+| 自动化测试 | 通过 | 2026-11-02 再次执行 `flutter test --no-pub`：1,216 项通过、37 项跳过、0 项失败；包含 WebDAV 请求拦截、递归扫描中途失败保留旧索引、特典标签优先于集数分类、媒体索引同步往返、人工关联冲突，以及 CDs 本地/WebDAV 路径、自然排序和 CUE 起播位置回归用例。 |
 | 本次改动静态分析 | 有既有提示，无错误 | 设置页、媒体库页面和设置页测试共报告 90 条 issue（warning/info），没有 error。 |
-| 应用与测试目录分析 | 有既有提示，无错误 | `flutter analyze --no-pub lib test` 报告 2,036 条 issue（198 warning、1,838 info），没有 error。 |
+| 应用与测试目录分析 | 有既有提示，无错误 | 2026-11-02 再次执行 `flutter analyze --no-pub lib test`：2,036 条 issue（198 warning、1,838 info），没有 error。 |
 | 全项目静态分析 | 未通过 | 完整分析报告为 5,479 条 issue，其中包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
 | Windows 发布构建 | 通过 | `scripts/package_personal_release.ps1 -Build` 完整执行成功；程序隐藏启动后保持运行 8 秒。 |
 | Android 发布构建 | 通过 | 同一打包脚本成功生成 arm64 APK；`apksigner` 验证 v2 签名，证书 SHA-256 为 `a083e7205dc014dbfd1a0b52f67a3f91a934ffe94b0f3d27ee268166570b4a9e`。 |
