@@ -6,6 +6,7 @@ import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
 import 'package:nipaplay/services/cue_sheet_parser.dart';
 import 'package:nipaplay/utils/storage_service.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -87,6 +88,26 @@ void main() {
     ]);
     expect(audioPlaylist.first.videoPath,
         'webdav://device-webdav/Anime/Example Show/CDs/Track 2.flac');
+
+    final localRoot = p.join(temp.path, 'Local Anime');
+    final localContext = await CloudMediaPlaybackContextFactory.create(
+      currentAsset: audioAssets.first,
+      sourceId: sourceId,
+      rootPath: localRoot,
+      normalizedRoot: '',
+      isLocalSource: true,
+      connectionId: null,
+      workKey: 'Example Show',
+      title: 'Example Show',
+      animeId: null,
+    );
+    expect(localContext, isNotNull);
+    expect(localContext!.sourceKind, PlaybackSourceKind.localFile);
+    final localPlaylist = await localContext.episodeLoader();
+    expect(
+      localPlaylist.first.videoPath,
+      p.join(localRoot, 'Example Show/CDs/Track 2.flac'),
+    );
 
     const cueText = '''
 FILE "Disc.flac" WAVE
