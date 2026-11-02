@@ -275,6 +275,38 @@ void main() {
             '/Show/Season 1', 'Show [01].mkv', 'video'),
         'episode',
       );
+      for (final marker in [
+        'NCOP',
+        'NCED',
+        'PV',
+        'CM',
+        'OVA',
+        'OAD',
+        'SP',
+        'MV',
+        'Visual Commentary',
+      ]) {
+        expect(
+          CloudMediaScanner.classifyAsset(
+            '/Show/Season 1',
+            '$marker [01].mkv',
+            'video',
+          ),
+          'extra',
+          reason: '$marker markers take priority over bracket episode numbers',
+        );
+      }
+      for (final directory in ['SP', 'SPs', 'Specials', 'Extras']) {
+        expect(
+          CloudMediaScanner.classifyAsset(
+            '/Show/$directory',
+            'Clip [01].mkv',
+            'video',
+          ),
+          'extra',
+          reason: '$directory directory classification takes priority',
+        );
+      }
       expect(
         CloudMediaScanner.classifyAsset('/Show/Scans', 'cover.jpg', 'image'),
         'scan',
