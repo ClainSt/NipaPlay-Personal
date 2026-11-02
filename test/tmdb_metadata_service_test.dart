@@ -140,8 +140,12 @@ void main() {
         requests.add(request);
         if (request.url.path == '/3/tv/901') return http.Response('', 404);
         return http.Response(
-          jsonEncode(
-              {'id': 901, 'title': 'A movie', 'original_title': 'A movie'}),
+          jsonEncode({
+            'id': 901,
+            'title': 'A movie',
+            'original_title': 'A movie',
+            'poster_path': '/movie.jpg'
+          }),
           200,
         );
       }),
@@ -193,6 +197,67 @@ void main() {
       isFalse,
     );
     expect(requested, isFalse);
+  });
+
+  test('season lookup stores titles and stills and reuses the persisted cache',
+      () async {
+    await database.upsertTmdbWorkMetadata(
+      sourceId: 'episode-library',
+      workKey: 'Show',
+      tmdbId: 123,
+      tmdbType: 'tv',
+      title: '作品',
+      originalTitle: 'Show',
+      overview: '',
+      posterUrl: '/poster.jpg',
+      rating: null,
+      metadataJson: '{"backdrop_path":"/back.jpg"}',
+    );
+    final work = (await database.getWorks(sourceId: 'episode-library')).single;
+    final requests = <http.Request>[];
+    final service = TmdbMetadataService(
+        tokenReader: () async => 'token',
+        client: MockClient((request) async {
+          requests.add(request);
+          expect(request.url.path, '/3/tv/123/season/2');
+          expect(request.url.queryParameters['language'], 'zh-CN');
+          return http.Response(
+              jsonEncode({
+                'season_number': 2,
+                'episodes': [
+                  {
+                    'episode_number': 1,
+                    'name': '第二季第一集',
+                    'still_path': '/still.jpg'
+                  },
+                ]
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'});
+        }));
+    addTearDown(service.close);
+    const assets = <Map<String, Object?>>[
+      {
+        'name': 'Show S02E01.mkv',
+        'relative_path': 'Show/S02/Show S02E01.mkv',
+        'category': 'episode',
+        'episode_number': 1
+      },
+      {'name': 'NCOP.mkv', 'category': 'extra'},
+    ];
+    final seasons = await service.loadEpisodeSeasons(
+        sourceId: 'episode-library', work: work, assets: assets);
+    expect(seasons['2'][0]['name'], '第二季第一集');
+    expect(seasons['2'][0]['still_path'], '/still.jpg');
+    expect(
+        await service.loadEpisodeSeasons(
+            sourceId: 'episode-library', work: work, assets: assets),
+        seasons);
+    expect(requests, hasLength(1));
+    final saved = (await database.getWorks(sourceId: 'episode-library')).single;
+    final metadata = jsonDecode(saved['metadata_json'] as String);
+    expect(metadata['backdrop_path'], '/back.jpg');
+    expect(metadata['tmdb_episode_seasons']['2'][0]['name'], '第二季第一集');
   });
 
   test('manual rescrape uses the stored typed TMDB movie ID', () async {

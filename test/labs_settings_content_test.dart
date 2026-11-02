@@ -25,7 +25,8 @@ void main() {
     messenger.setMockMethodCallHandler(secureStorageChannel, null);
   });
 
-  testWidgets('labs page exposes independent local, WebDAV and detail switches',
+  testWidgets(
+      'labs page exposes independent scrape switches without a new UI switch',
       (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1280, 1600);
@@ -61,15 +62,14 @@ void main() {
 
     expect(find.text('本地媒体库刮削模式'), findsOneWidget);
     expect(find.text('WebDAV 媒体库刮削模式'), findsOneWidget);
-    expect(find.text('动画详情页模式'), findsOneWidget);
+    expect(find.text('全新UI'), findsNothing);
 
     var switches = tester
         .widgetList<FluentSettingsSwitch>(find.byType(FluentSettingsSwitch))
         .toList();
-    expect(switches.length, greaterThanOrEqualTo(3));
+    expect(switches.length, greaterThanOrEqualTo(2));
     expect(switches[0].value, isFalse);
     expect(switches[1].value, isFalse);
-    expect(switches[2].value, isFalse);
 
     switches[0].onChanged!(true);
     await tester.pumpAndSettle();
@@ -85,15 +85,6 @@ void main() {
     expect(settings.localLibraryScrapeMode, LibraryScrapeMode.tmdbId);
     expect(settings.webDavLibraryScrapeMode, LibraryScrapeMode.tmdbId);
     expect(settings.enableCloudAnimeDetailSections, isFalse);
-
-    switches = tester
-        .widgetList<FluentSettingsSwitch>(find.byType(FluentSettingsSwitch))
-        .toList();
-    switches[2].onChanged!(true);
-    await tester.pumpAndSettle();
-    expect(settings.localLibraryScrapeMode, LibraryScrapeMode.tmdbId);
-    expect(settings.webDavLibraryScrapeMode, LibraryScrapeMode.tmdbId);
-    expect(settings.enableCloudAnimeDetailSections, isTrue);
   });
 }
 

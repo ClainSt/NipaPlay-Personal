@@ -5,8 +5,10 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nipaplay/models/playable_item.dart';
 import 'package:nipaplay/services/webdav_proxy_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/utils/external_player_utils.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
 import 'package:nipaplay/utils/webdav_http_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +26,7 @@ class _SeenRequest {
 class _DavServer {
   _DavServer({
     this.requireDigest = true,
+    this.requireBasic = false,
     Map<String, List<int>>? files,
     Map<String, String>? redirects,
   })  : files = files ?? {},
@@ -33,6 +36,7 @@ class _DavServer {
   static const nonce = 'dcd98b7102dd2f0e8b11d0f600bfb0c093';
 
   final bool requireDigest;
+  final bool requireBasic;
   String username = 'user';
   String password = 'pass';
   final Map<String, List<int>> files;
@@ -73,6 +77,18 @@ class _DavServer {
         HttpHeaders.wwwAuthenticateHeader,
         'Digest realm="$realm", nonce="$nonce", qop="auth", '
         'opaque="op4que", algorithm=MD5',
+      );
+      await response.close();
+      return;
+    }
+    if (requireBasic &&
+        fetchesFile &&
+        authorization !=
+            'Basic ${base64Encode(utf8.encode('$username:$password'))}') {
+      response.statusCode = HttpStatus.unauthorized;
+      response.headers.set(
+        HttpHeaders.wwwAuthenticateHeader,
+        'Basic realm="$realm"',
       );
       await response.close();
       return;
@@ -267,7 +283,10 @@ void main() {
       final url = await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
         MediaSourceUtils.buildWebDavPath(connection.id, '/dav/Show 01.mkv'),
       );
-      expect(url, startsWith('http://127.0.0.1:${WebDAVProxyService.instance.port}/webdav/stream'));
+      expect(
+          url,
+          startsWith(
+              'http://127.0.0.1:${WebDAVProxyService.instance.port}/webdav/stream'));
       return url!;
     }
 
@@ -286,6 +305,46 @@ void main() {
       expect(body, media.sublist(10, 20));
       expect(server.requests.last.method, 'GET');
       expect(server.requests.last.authorization, startsWith('Digest '));
+    });
+
+    test('中文目录、空格和加号文件名可经代理播放', () async {
+      const relativePath = '/光鸭云盘/动画-单作品/86 + [特别篇] (2021).mkv';
+      final encodedMedia = _DavServer(
+        files: {'/dav$relativePath': media},
+      );
+      await encodedMedia.start();
+      addTearDown(encodedMedia.stop);
+      final saved = await WebDAVService.instance.upsertConnection(
+        WebDAVConnection(
+          name: 'encoded-path-dav',
+          url: '${encodedMedia.origin}/dav/',
+          username: 'user',
+          password: 'pass',
+        ),
+      );
+      expect(saved, isTrue);
+      final encodedConnection = WebDAVService.instance.connections
+          .firstWhere((c) => c.name == 'encoded-path-dav');
+      final mediaPath = MediaSourceUtils.buildWebDavPath(
+        encodedConnection.id,
+        '/dav$relativePath',
+      );
+      final url = await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
+        mediaPath,
+      );
+      expect(url, isNotNull);
+
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+      final request = await client.getUrl(Uri.parse(url!));
+      final response = await request.close();
+      final body = await response.fold<List<int>>([], (a, b) => a..addAll(b));
+
+      expect(response.statusCode, 200);
+      expect(body, media);
+      expect(encodedMedia.requests.last.target, contains('%E5%85%89'));
+      expect(Uri.decodeComponent(encodedMedia.requests.last.target),
+          contains('86 + [特别篇] (2021).mkv'));
     });
 
     test('HEAD 请求以 HEAD 方法发往上游并通过 Digest 校验', () async {
@@ -311,10 +370,60 @@ void main() {
       await response.drain<void>();
 
       expect(response.statusCode, 401);
+      expect(
+        WebDAVProxyService.instance.authFailureMessageForMediaPath(
+          MediaSourceUtils.buildWebDavPath(
+            connection.id,
+            '/dav/Show 01.mkv',
+          ),
+        ),
+        contains('拒绝了当前账号'),
+      );
     });
 
-    test('匿名连接不走代理，仍返回直链', () async {
-      final anonymous = _DavServer(requireDigest: false);
+    test('服务器要求 Basic 且连接未填写账号时返回明确的修复提示', () async {
+      final basicServer = _DavServer(
+        requireDigest: false,
+        requireBasic: true,
+        files: {'/dav/Show 01.mkv': media},
+      );
+      await basicServer.start();
+      addTearDown(basicServer.stop);
+      final saved = await WebDAVService.instance.upsertConnection(
+        WebDAVConnection(
+          name: 'basic-auth-required',
+          url: '${basicServer.origin}/dav/',
+          username: '',
+          password: '',
+        ),
+      );
+      expect(saved, isTrue);
+      final basicConnection = WebDAVService.instance.connections
+          .firstWhere((c) => c.name == 'basic-auth-required');
+      final mediaPath = MediaSourceUtils.buildWebDavPath(
+        basicConnection.id,
+        '/dav/Show 01.mkv',
+      );
+      final url = await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
+        mediaPath,
+      );
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+      final response = await (await client.getUrl(Uri.parse(url!))).close();
+      await response.drain<void>();
+
+      expect(response.statusCode, 401);
+      expect(
+        WebDAVProxyService.instance.authFailureMessageForMediaPath(mediaPath),
+        contains('没有填写用户名和密码'),
+      );
+    });
+
+    test('匿名连接也通过代理转发媒体请求', () async {
+      final anonymous = _DavServer(
+        requireDigest: false,
+        files: {'/dav/Show 01.mkv': media},
+      );
       await anonymous.start();
       addTearDown(anonymous.stop);
       final saved = await WebDAVService.instance.upsertConnection(
@@ -329,12 +438,28 @@ void main() {
       final anon = WebDAVService.instance.connections
           .firstWhere((c) => c.name == 'anonymous-dav');
 
-      final url = await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
-        MediaSourceUtils.buildWebDavPath(anon.id, '/dav/Show 01.mkv'),
+      final url = await resolveExternalPlayerMediaPath(
+        PlayableItem(
+          videoPath:
+              MediaSourceUtils.buildWebDavPath(anon.id, '/dav/Show 01.mkv'),
+          actualPlayUrl: '${anonymous.origin}/dav/Show%2001.mkv',
+        ),
       );
 
       expect(WebDAVProxyService.instance.isRunning, isTrue);
-      expect(url, startsWith('${anonymous.origin}/dav/'));
+      expect(
+        url,
+        startsWith(
+          'http://127.0.0.1:${WebDAVProxyService.instance.port}/webdav/stream',
+        ),
+      );
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+      final request = await client.getUrl(Uri.parse(url!));
+      final response = await request.close();
+      final body = await response.fold<List<int>>([], (a, b) => a..addAll(b));
+      expect(response.statusCode, 200);
+      expect(body, media);
     });
   });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nipaplay/utils/webdav_http_auth.dart';
 
@@ -25,8 +26,7 @@ void main() {
           'algorithm=MD5';
       expect(auth.tryHandleUnauthorized(challenge), isTrue);
 
-      final digest =
-          auth.authorizationHeader('GET', '/dav/file.mkv');
+      final digest = auth.authorizationHeader('GET', '/dav/file.mkv');
       expect(digest, startsWith('Digest '));
       expect(digest, contains('username="u"'));
       expect(digest, contains('realm="dav"'));
@@ -52,7 +52,8 @@ void main() {
     test('stale=true 刷新 nonce 后重试一次', () {
       final auth = WebDavChallengeAuth(username: 'u', password: 'p');
       expect(
-        auth.tryHandleUnauthorized('Digest realm="dav", nonce="old", qop="auth"'),
+        auth.tryHandleUnauthorized(
+            'Digest realm="dav", nonce="old", qop="auth"'),
         isTrue,
       );
       expect(
@@ -90,6 +91,28 @@ void main() {
       expect(header, contains('cnonce="0a4f113b"'));
       expect(header, contains('response="6629fae49393a05397450978507c4ef1"'));
       expect(header, contains('opaque="5ccc069c403ebaf9f0171e9517f40e41"'));
+    });
+
+    test('服务器仅支持 auth-int 时按空 GET 实体计算摘要', () {
+      const cnonce = '0123456789abcdef';
+      final auth = WebDavChallengeAuth(
+        username: 'user',
+        password: 'pass',
+        cnonceGenerator: () => cnonce,
+      );
+      expect(
+        auth.tryHandleUnauthorized(
+          'Digest realm="dav", nonce="nonce-1", qop="auth-int", algorithm=MD5',
+        ),
+        isTrue,
+      );
+      final header = auth.authorizationHeader('GET', '/dav/file.mkv')!;
+      String hash(String input) => md5.convert(utf8.encode(input)).toString();
+      final ha1 = hash('user:dav:pass');
+      final ha2 = hash('GET:/dav/file.mkv:${hash('')}');
+      final expected = hash('$ha1:nonce-1:00000001:$cnonce:auth-int:$ha2');
+      expect(header, contains('qop=auth-int'));
+      expect(header, contains('response="$expected"'));
     });
 
     test('Digest 的 uri 与已编码的请求路径逐字一致（不二次编码）', () {
@@ -184,9 +207,10 @@ void main() {
         final resp = await req.close();
         // 本地服务器只认 Digest 之外的 Basic（dXNlcjpwYXNz），这里应该直接成功。
         expect(resp.statusCode, 206);
-        expect(resp.headers.value(HttpHeaders.contentRangeHeader),
-            'bytes 2-5/10');
-        final body = await resp.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+        expect(
+            resp.headers.value(HttpHeaders.contentRangeHeader), 'bytes 2-5/10');
+        final body =
+            await resp.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
         expect(body, [3, 4, 5, 6]);
         expect(seenAuthHeaders, everyElement(startsWith('Basic')));
       } finally {
@@ -224,7 +248,8 @@ void main() {
         );
         final resp2 = await retry.close();
         expect(resp2.statusCode, 200);
-        final body = await resp2.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+        final body =
+            await resp2.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
         expect(body.length, 10);
       } finally {
         client.close(force: true);

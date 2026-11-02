@@ -1,14 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart' as cupertino;
 import 'package:flutter/material.dart';
-import 'dart:convert';
 import 'package:nipaplay/media_library/pick_local_media_directory.dart';
 import 'package:nipaplay/services/harmony_local_media_service.dart';
 import 'package:nipaplay/utils/platform_identity.dart' as platformIdentity;
 import 'dart:io' as io;
 import 'package:path/path.dart' as p;
 import 'package:nipaplay/models/watch_history_model.dart';
-import 'package:nipaplay/models/playable_item.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:provider/provider.dart';
@@ -30,15 +28,14 @@ import 'package:nipaplay/services/manual_danmaku_matcher.dart'; // 导入手动�
 import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/webdav_service.dart'; // 导入WebDAV服务
 import 'package:nipaplay/services/cloud_media_scanner.dart';
+import 'package:nipaplay/services/cloud_media_scan_progress.dart';
+import 'package:nipaplay/media_library/cloud_media_scan_progress_panel.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
-import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
-import 'package:nipaplay/services/playback_service.dart';
 import 'package:nipaplay/services/auto_sync_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/media_library_reachability_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
-import 'package:nipaplay/models/media_identity.dart';
 import 'package:nipaplay/utils/manual_match_history.dart';
 import 'package:nipaplay/providers/watch_history_provider.dart';
 import 'package:nipaplay/providers/shared_remote_library_provider.dart';
@@ -50,10 +47,7 @@ import 'package:nipaplay/themes/nipaplay/widgets/large_screen_mode_scope.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/large_screen_page_scaffold.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/search_bar_action_button.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/webdav_connection_dialog.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/cloud_cue_sheet_dialog.dart';
-import 'package:nipaplay/services/cue_sheet_parser.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/smb_connection_dialog.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_webdav_connection_dialog.dart';
@@ -71,32 +65,6 @@ import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 
 enum LibraryManagementSection { local, webdav, smb }
-
-int _compareNaturalPath(String left, String right) {
-  final chunks = RegExp(r'(\d+)');
-  final a = chunks.allMatches(left.toLowerCase()).toList();
-  final b = chunks.allMatches(right.toLowerCase()).toList();
-  var aOffset = 0;
-  var bOffset = 0;
-  for (var i = 0; i < min(a.length, b.length); i++) {
-    final aMatch = a[i];
-    final bMatch = b[i];
-    final textOrder = left
-        .toLowerCase()
-        .substring(aOffset, aMatch.start)
-        .compareTo(right.toLowerCase().substring(bOffset, bMatch.start));
-    if (textOrder != 0) return textOrder;
-    final numberOrder =
-        int.parse(aMatch.group(0)!).compareTo(int.parse(bMatch.group(0)!));
-    if (numberOrder != 0) return numberOrder;
-    aOffset = aMatch.end;
-    bOffset = bMatch.end;
-  }
-  return left
-      .toLowerCase()
-      .substring(aOffset)
-      .compareTo(right.toLowerCase().substring(bOffset));
-}
 
 String _joinCloudLibraryPath(String root, String relativePath) {
   final normalizedRoot = root.replaceAll('\\', '/').replaceFirst(
@@ -1872,6 +1840,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
 
   IconData _phoneControlIcon(String tooltip) {
     if (tooltip.contains('添加')) return cupertino.CupertinoIcons.add_circled;
+    if (tooltip.contains('进度')) return cupertino.CupertinoIcons.chart_bar;
     if (tooltip.contains('清理') || tooltip.contains('移除')) {
       return cupertino.CupertinoIcons.delete;
     }
@@ -1892,10 +1861,17 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   ) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
-    final bool isScanning = scanService.isScanning;
+    final bool isScanning = widget.section == LibraryManagementSection.local
+        ? scanService.isScanning
+        : _isRemoteScraping;
     switch (widget.section) {
       case LibraryManagementSection.webdav:
         return [
+          _buildActionIcon(
+            icon: Icons.query_stats,
+            tooltip: '查看刮削进度',
+            onPressed: () => showCloudMediaScanProgressDialog(context),
+          ),
           _buildActionIcon(
             icon: Icons.folder_delete_outlined,
             tooltip: '清理不存在文件夹',
@@ -2555,9 +2531,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             _buildMountedDirectoryPathBar(mountedLocation),
           _buildAdaptiveManagementStatus(
             scanService: scanService,
-            isRemoteMode: isRemoteMode,
             scanProgressBackground: scanProgressBackground,
           ),
+          if (widget.section == LibraryManagementSection.webdav)
+            const CloudMediaScanProgressPanel(),
           Expanded(
             child: Stack(
               children: [
@@ -2585,20 +2562,20 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
 
   Widget _buildAdaptiveManagementStatus({
     required ScanService? scanService,
-    required bool isRemoteMode,
     required Color scanProgressBackground,
   }) {
+    final isRemoteLibrary = widget.section != LibraryManagementSection.local;
     final message =
-        isRemoteMode ? _remoteScrapeMessage : scanService?.scanMessage ?? '';
+        isRemoteLibrary ? _remoteScrapeMessage : scanService?.scanMessage ?? '';
     final isWorking =
-        isRemoteMode ? _isRemoteScraping : scanService?.isScanning == true;
+        isRemoteLibrary ? _isRemoteScraping : scanService?.isScanning == true;
     final progress =
-        isRemoteMode ? _remoteScrapeProgress : scanService?.scanProgress;
-    final hasFailures = !isRemoteMode &&
+        isRemoteLibrary ? _remoteScrapeProgress : scanService?.scanProgress;
+    final hasFailures = !isRemoteLibrary &&
         scanService != null &&
         !scanService.isScanning &&
         scanService.failedScanFiles.isNotEmpty;
-    final hasChanges = !isRemoteMode &&
+    final hasChanges = !isRemoteLibrary &&
         scanService != null &&
         !scanService.isScanning &&
         scanService.detectedChanges.isNotEmpty;
@@ -3028,10 +3005,18 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                   .getConnectionByIdOrName(rootConnectionId ?? '') ??
               connection;
       final rows = await database.getAssets(sourceId: selectedLibraryId);
+      final videoRows = rows
+          .where((asset) => asset['kind']?.toString() == 'video')
+          .toList(growable: false);
       final catalogWorks = await database.getWorks(sourceId: selectedLibraryId);
+      final videoWorkKeys = videoRows
+          .map((asset) => asset['work_key']?.toString() ?? '.')
+          .toSet();
       final works = [
-        ...catalogWorks,
-        if (rows.any((asset) => asset['work_key'] == '.'))
+        ...catalogWorks.where((work) =>
+            work['work_key'] != '.' &&
+            videoWorkKeys.contains(work['work_key']?.toString() ?? '.')),
+        if (videoRows.any((asset) => asset['work_key'] == '.'))
           <String, Object?>{
             'work_key': '.',
             'title': '未关联文件',
@@ -3039,185 +3024,13 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           },
       ];
 
-      Future<void> playIndexedAudio(
-        Map<String, Object?> audioAsset, {
-        CueSheetTrack? cueTrack,
-        List<CueSheetTrack>? cueTracks,
-      }) async {
-        if (!isLocalSource && sourceConnection == null) {
-          if (mounted) {
-            BlurSnackBar.show(context, '当前设备未配置此媒体来源的 WebDAV 连接');
-          }
-          return;
-        }
-        final workKey = audioAsset['work_key']?.toString() ?? '.';
-        final workMatches =
-            catalogWorks.where((work) => work['work_key'] == workKey).toList();
-        final work =
-            workMatches.isEmpty ? const <String, Object?>{} : workMatches.first;
-        final workTitle = work['title_cn']?.toString().trim().isNotEmpty == true
-            ? work['title_cn'].toString()
-            : work['title']?.toString().trim().isNotEmpty == true
-                ? work['title'].toString()
-                : audioAsset['name']?.toString() ?? 'CD';
-        final animeId = int.tryParse(work['bangumi_id']?.toString() ?? '');
-        final relativeAudio = cueTrack?.audioRelativePath ??
-            audioAsset['relative_path']?.toString() ??
-            '';
-        final audioPath = isLocalSource
-            ? p.join(rootPath, relativeAudio.replaceAll('/', p.separator))
-            : MediaSourceUtils.buildWebDavPath(
-                sourceConnection!.id,
-                _joinCloudLibraryPath(rootPath, relativeAudio),
-              );
-        final identityPath = cueTrack == null
-            ? relativeAudio
-            : '$relativeAudio#cue-track=${cueTrack.number}';
-        final mediaKey = MediaIdentity.remotePathKey(
-          source: 'cloudmedia',
-          connectionId: selectedLibraryId,
-          rawPath: identityPath,
-        );
-        final previousHistory =
-            await WatchHistoryManager.getHistoryByMediaKey(mediaKey);
-        final playbackContext = await CloudMediaPlaybackContextFactory.create(
-          currentAsset: {
-            ...audioAsset,
-            'kind': 'audio',
-            if (cueTracks != null) 'cue_tracks': cueTracks,
-          },
-          sourceId: selectedLibraryId,
-          rootPath: rootPath,
-          normalizedRoot:
-              rootPath.replaceAll('\\', '/').replaceFirst(RegExp(r'/+$'), ''),
-          isLocalSource: isLocalSource,
-          connectionId: sourceConnection?.id,
-          workKey: workKey,
-          title: workTitle,
-          animeId: animeId,
-        );
-        final displayName = cueTrack?.title ??
-            (audioAsset['name']?.toString() ?? relativeAudio);
-        final historyItem = WatchHistoryItem(
-          filePath: audioPath,
-          animeName: workTitle,
-          episodeTitle: displayName,
-          animeId: animeId,
-          duration: previousHistory?.duration ?? 0,
-          lastPosition: cueTrack?.startPosition.inMilliseconds ??
-              previousHistory?.lastPosition ??
-              0,
-          watchProgress: previousHistory?.watchProgress ?? 0,
-          lastWatchTime: previousHistory?.lastWatchTime ?? DateTime.now(),
-          mediaKey: mediaKey,
-        );
-        await PlaybackService().play(PlayableItem(
-          videoPath: audioPath,
-          title: workTitle,
-          subtitle: displayName,
-          animeId: animeId,
-          historyItem: historyItem,
-          mediaKey: mediaKey,
-          initialPositionMs: cueTrack?.startPosition.inMilliseconds,
-          detailContext: playbackContext,
-        ));
-      }
-
       Future<void> openCloudAsset(
         BuildContext assetContext,
         Map<String, Object?> asset,
       ) async {
-        final category = asset['category']?.toString();
         final relative = asset['relative_path']?.toString() ?? '';
         final fullPath = _joinCloudLibraryPath(rootPath, relative);
-        if (category == 'scan') {
-          final allAssets = await database.getAssets(
-            sourceId: selectedLibraryId,
-          );
-          final images = allAssets
-              .where((entry) =>
-                  entry['work_key'] == asset['work_key'] &&
-                  entry['category'] == 'scan' &&
-                  entry['kind'] == 'image')
-              .toList()
-            ..sort((a, b) => _compareNaturalPath(
-                  a['relative_path']?.toString() ?? '',
-                  b['relative_path']?.toString() ?? '',
-                ));
-          final selected = images.indexWhere(
-            (entry) => entry['relative_path'] == relative,
-          );
-          if (!assetContext.mounted || !mounted) return;
-          await Navigator.of(assetContext).push<void>(
-            MaterialPageRoute(
-              builder: (_) => CloudScansReaderPage(
-                connection: sourceConnection,
-                localRootPath: isLocalSource ? rootPath : null,
-                rootPath: rootPath,
-                images: images,
-                initialIndex: selected < 0 ? 0 : selected,
-              ),
-            ),
-          );
-          return;
-        }
-        if (asset['kind'] == 'cue') {
-          if (!isLocalSource && sourceConnection == null) {
-            if (assetContext.mounted) {
-              BlurSnackBar.show(assetContext, '当前设备未配置此媒体来源的 WebDAV 连接');
-            }
-            return;
-          }
-          try {
-            final cueText = isLocalSource
-                ? await io.File(p.join(rootPath, relative)).readAsString()
-                : utf8.decode(await WebDAVService.instance.readFileBytes(
-                    sourceConnection!,
-                    fullPath,
-                  ));
-            if (!assetContext.mounted) return;
-            final tracks = CueSheetParser.parse(cueText, cuePath: relative);
-            if (tracks.isEmpty) {
-              BlurSnackBar.show(assetContext, 'CUE 文件中没有可播放的音频曲目');
-              return;
-            }
-            final selectedTrack = await CloudCueSheetDialog.show(
-              context: assetContext,
-              title: asset['name']?.toString() ?? '选择 CUE 曲目',
-              tracks: tracks,
-            );
-            if (selectedTrack == null || !assetContext.mounted) return;
-            final indexedAssets = await database.getAssets(
-              sourceId: selectedLibraryId,
-            );
-            final audio = indexedAssets.where((entry) =>
-                entry['relative_path'] == selectedTrack.audioRelativePath &&
-                entry['kind'] == 'audio' &&
-                entry['work_key'] == asset['work_key']);
-            if (audio.isEmpty) {
-              BlurSnackBar.show(
-                assetContext,
-                '找不到 CUE 指定的音频文件：${selectedTrack.audioRelativePath}',
-              );
-              return;
-            }
-            await playIndexedAudio(
-              audio.first,
-              cueTrack: selectedTrack,
-              cueTracks: tracks,
-            );
-          } catch (error) {
-            if (assetContext.mounted) {
-              BlurSnackBar.show(assetContext, '读取 CUE 文件失败：$error');
-            }
-          }
-          return;
-        }
         final name = asset['name']?.toString() ?? '';
-        if (category == 'cd' && asset['kind'] == 'audio') {
-          await playIndexedAudio(asset);
-          return;
-        }
         if (isLocalSource) {
           widget.onPlayEpisode(WatchHistoryItem(
             filePath: p.join(rootPath, relative.replaceAll('/', p.separator)),
@@ -3255,11 +3068,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       await showInViewDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('云媒体索引（${catalogWorks.length} 部作品 · ${rows.length} 个文件）'),
+          title: Text(
+              '云媒体索引（${works.where((work) => work['work_key'] != '.').length} 部作品 · ${videoRows.length} 个视频）'),
           content: SizedBox(
             width: 720,
             height: 520,
-            child: rows.isEmpty
+            child: videoRows.isEmpty
                 ? Center(
                     child: Text(
                         isLocalSource ? '此本地媒体库尚无扫描索引' : '此 WebDAV 来源尚无扫描索引'),
@@ -3330,27 +3144,20 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                         ),
                       Expanded(
                         child: ListView.separated(
-                          itemCount: rows.length,
+                          itemCount: videoRows.length,
                           separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
-                            final row = rows[index];
+                            final row = videoRows[index];
                             final id = row['tmdb_tv_id'] ??
                                 row['tmdb_movie_id'] ??
                                 row['tmdb_unknown_id'] ??
                                 row['tmdb_id'];
                             final episode = row['episode_number'];
-                            final category = row['category']?.toString();
                             final kind = row['kind']?.toString();
-                            final canOpen =
-                                (category == 'scan' && kind == 'image') ||
-                                    (category == 'cd' && kind == 'audio');
+                            final canOpen = kind == 'video';
                             return ListTile(
                               dense: true,
-                              leading: Icon(category == 'scan'
-                                  ? Icons.menu_book_outlined
-                                  : category == 'cd'
-                                      ? Icons.album_outlined
-                                      : Icons.movie_outlined),
+                              leading: const Icon(Icons.movie_outlined),
                               title: Text(row['name']?.toString() ?? ''),
                               subtitle: Text(
                                 '${row['category']} · ${row['relative_path']}'
@@ -3403,96 +3210,46 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                         }
                                         return;
                                       }
-                                      if (category == 'scan') {
-                                        final images = rows
-                                            .where((asset) =>
-                                                asset['category'] == 'scan' &&
-                                                asset['kind'] == 'image')
-                                            .toList()
-                                          ..sort((a, b) => _compareNaturalPath(
-                                                a['relative_path']
-                                                        ?.toString() ??
-                                                    '',
-                                                b['relative_path']
-                                                        ?.toString() ??
-                                                    '',
-                                              ));
-                                        final selectedPath =
-                                            row['relative_path']?.toString();
-                                        final start = images.indexWhere(
-                                            (asset) =>
-                                                asset['relative_path'] ==
-                                                selectedPath);
+                                      final relative =
+                                          row['relative_path']?.toString() ??
+                                              '';
+                                      if (isLocalSource) {
                                         if (!mounted ||
                                             !dialogContext.mounted) {
                                           return;
                                         }
                                         Navigator.of(dialogContext).pop();
-                                        await Navigator.of(context).push<void>(
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                CloudScansReaderPage(
-                                              connection: sourceConnection,
-                                              localRootPath: isLocalSource
-                                                  ? rootPath
-                                                  : null,
-                                              rootPath: rootPath,
-                                              images: images,
-                                              initialIndex:
-                                                  start < 0 ? 0 : start,
-                                            ),
+                                        final name =
+                                            row['name']?.toString() ?? '';
+                                        widget.onPlayEpisode(WatchHistoryItem(
+                                          filePath: p.join(
+                                            rootPath,
+                                            relative.replaceAll(
+                                                '/', p.separator),
                                           ),
-                                        );
-                                      } else {
-                                        final relative =
-                                            row['relative_path']?.toString() ??
-                                                '';
-                                        if (category == 'cd' &&
-                                            row['kind'] == 'audio') {
-                                          Navigator.of(dialogContext).pop();
-                                          await playIndexedAudio(row);
-                                          return;
-                                        }
-                                        if (isLocalSource) {
-                                          if (!mounted ||
-                                              !dialogContext.mounted) {
-                                            return;
-                                          }
-                                          Navigator.of(dialogContext).pop();
-                                          final name =
-                                              row['name']?.toString() ?? '';
-                                          widget.onPlayEpisode(WatchHistoryItem(
-                                            filePath: p.join(
-                                              rootPath,
-                                              relative.replaceAll(
-                                                  '/', p.separator),
-                                            ),
-                                            animeName: name.replaceAll(
-                                                RegExp(r'\.[^.]+$'), ''),
-                                            episodeTitle: '',
-                                            duration: 0,
-                                            lastPosition: 0,
-                                            watchProgress: 0,
-                                            lastWatchTime: DateTime.now(),
-                                          ));
-                                          return;
-                                        }
-                                        final fullPath =
-                                            '${rootPath.replaceAll(RegExp(r'/+$'), '')}/$relative';
-                                        final file = WebDAVFile(
-                                          name: row['name']?.toString() ?? '',
-                                          path: fullPath,
-                                          isDirectory: false,
-                                          size: row['size'] as int?,
-                                        );
-                                        if (!mounted ||
-                                            !dialogContext.mounted) {
-                                          return;
-                                        }
-                                        Navigator.of(dialogContext).pop();
-                                        _playWebDAVFile(
-                                            sourceConnection!, file);
+                                          animeName: name.replaceAll(
+                                              RegExp(r'\.[^.]+$'), ''),
+                                          episodeTitle: '',
+                                          duration: 0,
+                                          lastPosition: 0,
+                                          watchProgress: 0,
+                                          lastWatchTime: DateTime.now(),
+                                        ));
+                                        return;
                                       }
+                                      final fullPath =
+                                          '${rootPath.replaceAll(RegExp(r'/+$'), '')}/$relative';
+                                      final file = WebDAVFile(
+                                        name: row['name']?.toString() ?? '',
+                                        path: fullPath,
+                                        isDirectory: false,
+                                        size: row['size'] as int?,
+                                      );
+                                      if (!mounted || !dialogContext.mounted) {
+                                        return;
+                                      }
+                                      Navigator.of(dialogContext).pop();
+                                      _playWebDAVFile(sourceConnection!, file);
                                     }
                                   : null,
                             );
@@ -4398,6 +4155,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           scanService: scanService,
           scanProgressBackground: scanProgressBackground,
         ),
+        if (widget.section == LibraryManagementSection.webdav)
+          const CloudMediaScanProgressPanel(),
         Expanded(
           child: switch (widget.section) {
             LibraryManagementSection.webdav =>
@@ -4430,6 +4189,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     switch (widget.section) {
       case LibraryManagementSection.webdav:
         return [
+          NipaplayLargeScreenActionButton(
+            icon: Icons.query_stats,
+            label: '刮削进度',
+            onPressed: () => showCloudMediaScanProgressDialog(context),
+          ),
+          const SizedBox(width: 10),
           NipaplayLargeScreenActionButton(
             icon: Icons.cloud_outlined,
             label: '添加',
@@ -6824,7 +6589,13 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   Future<_RemoteScrapeResult> _scrapeRemoteFiles({
     required String sourceLabel,
     required List<_RemoteScrapeCandidate> candidates,
-    void Function(int processed, int total, String currentName)? onProgress,
+    void Function(
+      int processed,
+      int total,
+      String currentName,
+      int matched,
+      int failed,
+    )? onProgress,
   }) async {
     int matched = 0;
     int failed = 0;
@@ -6920,7 +6691,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         debugPrint('$sourceLabel 刮削失败: ${candidate.fileName} -> $e');
       } finally {
         processed++;
-        onProgress?.call(processed, total, candidate.fileName);
+        onProgress?.call(processed, total, candidate.fileName, matched, failed);
       }
     }
 
@@ -7027,11 +6798,31 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           progress: null,
           updateProgress: true,
         );
+        final scanProgress = CloudMediaScanProgress.instance;
+        scanProgress.start(source: 'WebDAV', rootPath: folderPath);
         // 递归获取文件夹中的所有视频文件
-        final files = await _getWebDAVVideoFiles(connection, folderPath);
+        final files = await _getWebDAVVideoFiles(
+          connection,
+          folderPath,
+          onDirectoryVisited: (_) => scanProgress.updateListing(
+            directoriesVisited: scanProgress.directoriesVisited + 1,
+            videosFound: scanProgress.videosFound,
+          ),
+          onVideoFound: (_) => scanProgress.updateListing(
+            directoriesVisited: scanProgress.directoriesVisited,
+            videosFound: scanProgress.videosFound + 1,
+          ),
+        );
 
         if (files.isEmpty) {
           _finishRemoteScrape('未找到可刮削的视频文件');
+          scanProgress.complete(
+            message: '扫描完成：未找到可刮削的视频文件',
+            directoriesVisited: scanProgress.directoriesVisited,
+            videosFound: 0,
+            matchedWorks: 0,
+            failedWorks: 0,
+          );
           if (mounted) {
             BlurSnackBar.show(context, '未找到可刮削的视频文件');
           }
@@ -7061,15 +6852,28 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           processed: 0,
           total: candidates.length,
         );
+        scanProgress.updateMatching(
+          processed: 0,
+          total: candidates.length,
+          matched: 0,
+          failed: 0,
+        );
         final result = await _scrapeRemoteFiles(
           sourceLabel: sourceLabel,
           candidates: candidates,
-          onProgress: (processed, total, _) {
+          onProgress: (processed, total, currentName, matched, failed) {
             _updateRemoteScrapeProgress(
               sourceLabel: sourceLabel,
               folderName: folderName,
               processed: processed,
               total: total,
+            );
+            CloudMediaScanProgress.instance.updateMatching(
+              processed: processed,
+              total: total,
+              currentWork: currentName,
+              matched: matched,
+              failed: failed,
             );
           },
         );
@@ -7083,11 +6887,20 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           failed: result.failed,
         );
         _finishRemoteScrape(summary);
+        CloudMediaScanProgress.instance.complete(
+          message: summary,
+          directoriesVisited:
+              CloudMediaScanProgress.instance.directoriesVisited,
+          videosFound: result.total,
+          matchedWorks: result.matched,
+          failedWorks: result.failed,
+        );
         if (mounted) {
           BlurSnackBar.show(context, summary);
         }
       } catch (e) {
         _finishRemoteScrape('刮削WebDAV文件夹失败: $e');
+        CloudMediaScanProgress.instance.fail(e);
         if (mounted) {
           BlurSnackBar.show(context, '刮削WebDAV文件夹失败: $e');
         }
@@ -7098,10 +6911,13 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   // 获取WebDAV文件夹中的视频文件
   Future<List<WebDAVFile>> _getWebDAVVideoFiles(
       WebDAVConnection connection, String folderPath,
-      {bool recursive = true}) async {
+      {bool recursive = true,
+      void Function(String path)? onDirectoryVisited,
+      void Function(WebDAVFile file)? onVideoFound}) async {
     final List<WebDAVFile> videoFiles = [];
 
     try {
+      onDirectoryVisited?.call(folderPath);
       final files =
           await WebDAVService.instance.listDirectory(connection, folderPath);
 
@@ -7109,19 +6925,24 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         if (file.isDirectory) {
           // 递归获取子文件夹中的视频文件
           if (recursive) {
+            if (CloudMediaScanner.isDeferredDirectory(file.name)) continue;
             final subFiles = await _getWebDAVVideoFiles(connection, file.path,
-                recursive: true);
+                recursive: true,
+                onDirectoryVisited: onDirectoryVisited,
+                onVideoFound: onVideoFound);
             videoFiles.addAll(subFiles);
           }
         } else {
           // 检查是否为视频文件
           if (WebDAVService.instance.isVideoFile(file.name)) {
             videoFiles.add(file);
+            onVideoFound?.call(file);
           }
         }
       }
     } catch (e) {
       print('获取WebDAV视频文件失败: $e');
+      rethrow;
     }
 
     return videoFiles;
@@ -7298,7 +7119,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         final result = await _scrapeRemoteFiles(
           sourceLabel: sourceLabel,
           candidates: candidates,
-          onProgress: (processed, total, _) {
+          onProgress: (processed, total, _, __, ___) {
             _updateRemoteScrapeProgress(
               sourceLabel: sourceLabel,
               folderName: folderName,

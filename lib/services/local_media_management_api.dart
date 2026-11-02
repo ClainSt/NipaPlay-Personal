@@ -11,6 +11,7 @@ import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/providers/service_provider.dart';
 import 'package:nipaplay/services/danmaku_matching_service.dart';
 import 'package:nipaplay/services/scan_service.dart';
+import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
@@ -482,6 +483,7 @@ class LocalMediaManagementApi {
       final files = await _webdavService.listDirectory(connection, folderPath);
       for (final file in files) {
         if (file.isDirectory) {
+          if (CloudMediaScanner.isDeferredDirectory(file.name)) continue;
           final subFiles =
               await _collectWebDavVideoFiles(connection, file.path);
           videoFiles.addAll(subFiles);
@@ -861,9 +863,8 @@ class LocalMediaManagementApi {
         dirFiles.add(entry);
       }
 
-      final dirNames = dirFiles
-          .map((file) => p.basename(file.path).toLowerCase())
-          .toSet();
+      final dirNames =
+          dirFiles.map((file) => p.basename(file.path).toLowerCase()).toSet();
 
       for (final entry in dirFiles) {
         final filePath = entry.path;
@@ -892,7 +893,8 @@ class LocalMediaManagementApi {
 
         final subtitleBaseName =
             p.basenameWithoutExtension(filePath).toLowerCase();
-        final isLikelyMatch = subtitleMatchesVideo(videoBaseName, subtitleBaseName);
+        final isLikelyMatch =
+            subtitleMatchesVideo(videoBaseName, subtitleBaseName);
 
         items.add({
           'name': p.basename(filePath),

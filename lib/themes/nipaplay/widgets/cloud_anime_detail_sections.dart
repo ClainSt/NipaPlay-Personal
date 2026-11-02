@@ -75,8 +75,6 @@ class _CloudAnimeWorkCard extends StatelessWidget {
   static const _labels = <String, String>{
     'episode': '正片',
     'extra': '特典',
-    'cd': 'CDs',
-    'scan': 'Scans',
   };
 
   @override
@@ -157,7 +155,7 @@ class _CloudAnimeWorkCard extends StatelessWidget {
                                         ),
                                       ),
                           icon: const Icon(Icons.view_list_outlined),
-                          label: const Text('查看正片、特典、CDs 与 Scans'),
+                          label: const Text('查看正片与特典'),
                         ),
                       ),
                     ],

@@ -4,7 +4,6 @@ import 'package:kmbal_ionicons/kmbal_ionicons.dart';
 import 'package:nipaplay/l10n/l10n.dart';
 import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/settings/adaptive_settings_widgets.dart';
-import 'package:nipaplay/utils/globals.dart' as globals;
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:provider/provider.dart';
 
@@ -62,42 +61,13 @@ class LabsSettingsContent extends StatelessWidget {
                 AdaptiveSettingsTile.button(
                   title: 'TMDB 元数据访问令牌',
                   subtitle: labsSettings.tmdbReadAccessTokenConfigured
-                      ? '已保存在本机安全存储中，不会上传到媒体库同步空间'
-                      : '配置后可获取电影元数据；令牌仅保存在本机安全存储中',
+                      ? '已配置并保存在本设备；此凭据不会随媒体库同步到其他设备'
+                      : 'TMDB ID 刮削需要凭据；Windows、Android 等设备需分别配置',
                   icon: Icons.key,
                   phoneIcon: cupertino.CupertinoIcons.lock,
                   trailingIcon: Ionicons.chevron_forward,
                   onTap: () => _configureTmdbToken(context, labsSettings),
                 ),
-                AdaptiveSettingsTile.toggle(
-                  title: '动画详情页模式',
-                  subtitle: labsSettings.enableCloudAnimeDetailSections
-                      ? '分类模式：显示正片、特典、CDs 和 Scans'
-                      : '原版模式：使用 NipaPlay 原版详情页布局',
-                  icon: Ionicons.albums_outline,
-                  phoneIcon: cupertino.CupertinoIcons.rectangle_stack,
-                  value: labsSettings.enableCloudAnimeDetailSections,
-                  onChanged: labsSettings.setEnableCloudAnimeDetailSections,
-                ),
-                if (!globals.isTelevision)
-                  AdaptiveSettingsTile.toggle(
-                    title: _text(
-                      context,
-                      '新版番剧卡片页面',
-                      '新版番劇卡片頁面',
-                      'New Anime Detail Page',
-                    ),
-                    subtitle: _text(
-                      context,
-                      '开启后，桌面、平板和手机均使用新版全屏番剧详情页',
-                      '開啟後，桌面、平板和手機均使用新版全螢幕番劇詳情頁',
-                      'Use the new full-screen anime detail page on desktop, tablet, and phone.',
-                    ),
-                    icon: Ionicons.albums_outline,
-                    phoneIcon: cupertino.CupertinoIcons.rectangle_stack,
-                    value: labsSettings.enableImmersiveAnimeDetail,
-                    onChanged: labsSettings.setEnableImmersiveAnimeDetail,
-                  ),
                 AdaptiveSettingsTile.button(
                   title: _text(
                     context,
@@ -139,7 +109,7 @@ class LabsSettingsContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '在 TMDB 账户的 API 设置中创建 API Read Access Token。令牌只保存在此设备的安全存储中。',
+                '粘贴 TMDB API Read Access Token（推荐）或 32 位 v3 API Key。每台设备单独保存，凭据只保存在本机安全存储中。',
               ),
               const SizedBox(height: 12),
               TextField(
@@ -149,7 +119,7 @@ class LabsSettingsContent extends StatelessWidget {
                 autocorrect: false,
                 enableSuggestions: false,
                 decoration: const InputDecoration(
-                  labelText: 'Bearer Token',
+                  labelText: 'TMDB API 凭据',
                   border: OutlineInputBorder(),
                 ),
               ),

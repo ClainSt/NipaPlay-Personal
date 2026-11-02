@@ -308,7 +308,7 @@ void main() {
       lessThan(tester.getTopLeft(find.text('本地媒体库').first).dx),
     );
 
-    await tester.tap(find.text('排序'));
+    await tester.tap(find.byTooltip('排序'));
     await tester.pumpAndSettle();
     final localHandle = find.byKey(
       const ValueKey<String>('media-library-order-drag-local_library'),
@@ -448,7 +448,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('排序'));
+    await tester.tap(find.byTooltip('排序'));
     await tester.pumpAndSettle();
 
     expect(find.text('媒体库排序'), findsOneWidget);

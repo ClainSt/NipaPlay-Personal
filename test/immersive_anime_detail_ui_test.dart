@@ -472,7 +472,7 @@ void main() {
 
   test('immersive episode time is limited to reliable local history', () {
     final source = File('lib/pages/anime_detail_page.dart').readAsStringSync();
-    expect(source, contains('_hasReliableLocalDuration(history)'));
+      expect(source, contains('_hasReliableLocalDuration(lastWatched)'));
     expect(
       source,
       isNot(contains('_sharedEpisodeMap[episode.id]?.duration')),

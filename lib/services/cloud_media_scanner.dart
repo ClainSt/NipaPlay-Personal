@@ -7,6 +7,7 @@ import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_scraper.dart';
 import 'package:nipaplay/services/cloud_media_models.dart';
 import 'package:nipaplay/services/auto_sync_service.dart';
+import 'package:nipaplay/services/cloud_media_scan_progress.dart';
 
 export 'package:nipaplay/services/cloud_media_models.dart';
 
@@ -30,15 +31,13 @@ class CloudMediaScanner {
     'ts',
     'm2ts',
   };
-  static const audioExtensions = <String>{
-    'flac',
-    'mp3',
-    'wav',
-    'm4a',
-    'aac',
-    'ogg',
-  };
-  static const imageExtensions = <String>{'jpg', 'jpeg', 'png', 'webp'};
+
+  static const _deferredDirectoryNames = {'cd', 'cds', 'scan', 'scans'};
+
+  /// CD audio and scans are deferred features; don't recurse into them during
+  /// video library scans (some WebDAV servers also reject these directories).
+  static bool isDeferredDirectory(String name) =>
+      _deferredDirectoryNames.contains(name.trim().toLowerCase());
 
   Future<CloudMediaScanResult> scan({
     required WebDAVConnection connection,
@@ -46,28 +45,32 @@ class CloudMediaScanner {
     String? sourceId,
     bool recursive = true,
     void Function(int directoriesVisited)? onProgress,
+    void Function(int directoriesVisited, int videosFound)? onDetailedProgress,
   }) async {
     final root = _normalize(rootPath);
     final pending = <String>[root];
     final visited = <String>{};
     final files = <CloudMediaAsset>[];
+    var videosFound = 0;
     while (pending.isNotEmpty) {
       final directory = pending.removeLast();
       if (!visited.add(directory)) continue;
       // listDirectoryAll is PROPFIND metadata listing; do not replace with GET.
-      final entries = await _webDav.listDirectoryAll(
+      final entries = await _listDirectoryWithTransientRetry(
         connection,
         directory,
-        forceRefresh: true,
       );
       onProgress?.call(visited.length);
       for (final entry in entries) {
         if (entry.isDirectory) {
-          if (recursive) pending.add(_normalize(entry.path));
+          if (recursive && !isDeferredDirectory(entry.name)) {
+            pending.add(_normalize(entry.path));
+          }
           continue;
         }
         final kind = _kind(entry.name);
         if (kind == null) continue;
+        if (kind == 'video') videosFound++;
         files.add(
           CloudMediaAsset(
             sourceId: sourceId ?? connection.id,
@@ -84,11 +87,35 @@ class CloudMediaScanner {
           ),
         );
       }
+      onDetailedProgress?.call(visited.length, videosFound);
     }
     return CloudMediaScanResult(
       rootPath: root,
       assets: List.unmodifiable(files),
     );
+  }
+
+  Future<List<WebDAVFile>> _listDirectoryWithTransientRetry(
+    WebDAVConnection connection,
+    String directory,
+  ) async {
+    for (var attempt = 0;; attempt++) {
+      try {
+        return await _webDav.listDirectoryAll(
+          connection,
+          directory,
+          forceRefresh: true,
+        );
+      } catch (error) {
+        final message = error.toString().toLowerCase();
+        final transient = message.contains('broken pipe') ||
+            message.contains('connection reset') ||
+            message.contains('socketexception') ||
+            message.contains('connectionerror');
+        if (!transient || attempt >= 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+      }
+    }
   }
 
   Future<CloudMediaScanResult> scanAndIndex({
@@ -97,19 +124,62 @@ class CloudMediaScanner {
     bool recursive = true,
     void Function(int directoriesVisited)? onProgress,
   }) async {
-    final database = CloudMediaIndexDatabase.instance;
-    final libraryId = await database.ensureLibraryRoot(
-      connectionId: connection.id,
-      rootPath: rootPath,
-    );
-    final result = await scan(
-      connection: connection,
-      rootPath: rootPath,
-      sourceId: libraryId,
-      recursive: recursive,
-      onProgress: onProgress,
-    );
-    return _indexAssets(libraryId, result);
+    final progress = CloudMediaScanProgress.instance;
+    progress.start(source: 'WebDAV', rootPath: rootPath);
+    try {
+      final database = CloudMediaIndexDatabase.instance;
+      final libraryId = await database.ensureLibraryRoot(
+        connectionId: connection.id,
+        rootPath: rootPath,
+      );
+      final result = await scan(
+        connection: connection,
+        rootPath: rootPath,
+        sourceId: libraryId,
+        recursive: recursive,
+        onProgress: onProgress,
+        onDetailedProgress: (directoriesVisited, videosFound) {
+          progress.updateListing(
+            directoriesVisited: directoriesVisited,
+            videosFound: videosFound,
+          );
+        },
+      );
+      progress.updateIndexing(
+        filesIndexed: 0,
+        totalFiles: result.assets.length,
+      );
+      final indexedResult = await _indexAssets(
+        libraryId,
+        result,
+        onScrapeProgress: (processed, total, workKey, matched, failed) {
+          progress.updateMatching(
+            processed: processed,
+            total: total,
+            currentWork: workKey,
+            matched: matched,
+            failed: failed,
+          );
+        },
+      );
+      final videoCount =
+          result.assets.where((asset) => asset.kind == 'video').length;
+      progress.complete(
+        message: videoCount == 0
+            ? '扫描完成：未找到可展示的视频文件'
+            : '扫描完成：发现 $videoCount 个视频，匹配 ${indexedResult.matchedWorks} 部作品'
+                '${indexedResult.failedWorks == 0 ? '' : '，${indexedResult.failedWorks} 部待确认'}',
+        directoriesVisited: progress.directoriesVisited,
+        videosFound: videoCount,
+        matchedWorks: indexedResult.matchedWorks,
+        failedWorks: indexedResult.failedWorks,
+        totalFiles: result.assets.length,
+      );
+      return indexedResult;
+    } catch (error) {
+      progress.fail(error);
+      rethrow;
+    }
   }
 
   /// Local counterpart of [scanAndIndex]. It stats directory entries only and
@@ -139,7 +209,9 @@ class CloudMediaScanner {
       final directory = io.Directory(directoryPath);
       await for (final entity in directory.list(followLinks: false)) {
         if (entity is io.Directory) {
-          if (recursive) pending.add(entity.path);
+          if (recursive && !isDeferredDirectory(p.basename(entity.path))) {
+            pending.add(entity.path);
+          }
           continue;
         }
         if (entity is! io.File) continue;
@@ -175,9 +247,10 @@ class CloudMediaScanner {
   }
 
   Future<CloudMediaScanResult> _indexAssets(
-    String libraryId,
-    CloudMediaScanResult result,
-  ) async {
+      String libraryId, CloudMediaScanResult result,
+      {void Function(int processed, int total, String workKey, int matched,
+              int failed)?
+          onScrapeProgress}) async {
     final database = CloudMediaIndexDatabase.instance;
     await database.upsertAssets(
       result.assets
@@ -198,6 +271,12 @@ class CloudMediaScanner {
           )
           .toList(),
     );
+    if (result.assets.isNotEmpty) {
+      CloudMediaScanProgress.instance.updateIndexing(
+        filesIndexed: result.assets.length,
+        totalFiles: result.assets.length,
+      );
+    }
     await database.removeMissingAssets(
       sourceId: libraryId,
       seenRelativePaths:
@@ -208,7 +287,9 @@ class CloudMediaScanner {
       sourceId: libraryId,
       rootPath: result.rootPath,
       assets: result.assets,
+      onProgress: onScrapeProgress,
     );
+    await database.removeOrphanedWorks(libraryId);
     unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
     return result.copyWith(
       libraryId: libraryId,
@@ -222,9 +303,6 @@ class CloudMediaScanner {
     if (dot < 0) return null;
     final ext = name.substring(dot + 1).toLowerCase();
     if (videoExtensions.contains(ext)) return 'video';
-    if (audioExtensions.contains(ext)) return 'audio';
-    if (imageExtensions.contains(ext)) return 'image';
-    if (ext == 'cue') return 'cue';
     if (ext == 'nfo') return 'nfo';
     return null;
   }
@@ -264,25 +342,14 @@ class CloudMediaScanner {
     final path = directory.toLowerCase();
     final lower = name.toLowerCase();
     final segments = path.split('/').where((segment) => segment.isNotEmpty);
-    if (segments.any((segment) => segment == 'cds' || segment == 'ost')) {
-      return 'cd';
-    }
-    if (segments.any((segment) => segment == 'scans' || segment == 'booklet')) {
-      return 'scan';
-    }
     if (segments.any(
-      (segment) => const {'sp', 'sps', 'specials', 'extras'}.contains(segment),
+      (segment) => const {'sp', 'sps', 'specials', 'extras', 'menu', 'menus'}
+          .contains(segment),
     )) {
       return 'extra';
     }
-    if (kind == 'audio' || kind == 'cue') {
-      return 'cd';
-    }
-    if (kind == 'image') {
-      return 'scan';
-    }
     if (RegExp(
-      r'(^|[^a-z])(ncoped|ncop|nced|pv|cm|ova|oad|sp|mv|visual commentary)([^a-z]|$)',
+      r'(^|[^a-z])(ncoped|ncop|nced|menu|pv|cm|ova|oad|sp|mv|visual commentary)([^a-z]|$)',
       caseSensitive: false,
     ).hasMatch(lower)) {
       return 'extra';
@@ -312,13 +379,23 @@ class CloudMediaScanner {
   }
 
   static String _workKey(String root, String directory) {
-    final relativeDirectory = _relativeToRoot(root, directory);
+    final normalizedRoot = root.replaceAll('\\', '/');
+    final relativeDirectory = _relativeToRoot(
+      normalizedRoot,
+      directory.replaceAll('\\', '/'),
+    );
+    // A user may select a single work folder (often named with a TMDB ID)
+    // instead of its parent library directory. Root and season files belong
+    // to that work in this case.
+    if (parseTmdbId(normalizedRoot) != null) {
+      return normalizedRoot.split('/').where((part) => part.isNotEmpty).last;
+    }
     if (relativeDirectory.isEmpty) return '.';
     final firstSegment = relativeDirectory.split('/').first;
     // When a user chooses the series folder itself as the library root, a
     // season/special subdirectory is still part of that root work.
     if (RegExp(
-      r'^(?:s\d{1,2}|season\s*\d{1,2}|sp|sps|specials|extras|cds|ost|scans|booklet)$',
+      r'^(?:s\d{1,2}|season\s*\d{1,2}|sp|sps|specials|extras)$',
       caseSensitive: false,
     ).hasMatch(firstSegment.trim())) {
       return '.';

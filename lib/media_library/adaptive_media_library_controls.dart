@@ -1,3 +1,4 @@
+import 'package:nipaplay/services/cloud_media_scan_progress.dart';
 import 'package:flutter/cupertino.dart' as cupertino;
 import 'package:flutter/material.dart' as material;
 import 'package:flutter/services.dart' show KeyDownEvent, LogicalKeyboardKey;
@@ -6,10 +7,12 @@ import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/app/unified_media_library_sections.dart';
 import 'package:nipaplay/media_library/adaptive_media_collection_view.dart';
 import 'package:nipaplay/media_library/cloud_media_catalog_collection_view.dart';
+import 'package:nipaplay/media_library/cloud_media_scan_progress_panel.dart';
 import 'package:nipaplay/media_library/media_source_option.dart';
 import 'package:nipaplay/media_library/unified_library_management_model.dart';
 import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/providers/appearance_settings_provider.dart';
+import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_media_library_section_picker.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_app_page_header.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
@@ -376,34 +379,39 @@ class AdaptiveMediaLibrarySectionContent extends material.StatelessWidget {
   material.Widget build(material.BuildContext context) {
     if (section.contentType == UnifiedMediaLibraryContentType.mediaCollection) {
       if (section.source == UnifiedMediaLibrarySource.webdav) {
-        return material.DefaultTabController(
-          length: 2,
-          child: material.Column(
-            children: [
-              const material.TabBar(
-                tabs: [
-                  material.Tab(text: '云媒体库'),
-                  material.Tab(text: '观看记录'),
-                ],
-              ),
-              material.Expanded(
-                child: material.TabBarView(
-                  children: [
-                    CloudMediaCatalogCollectionView(
-                      onPlayEpisode: onPlayEpisode,
-                    ),
-                    AdaptiveMediaCollectionView(
-                      key: material.ValueKey<String>(
-                        'collection-history-${section.id}',
-                      ),
-                      source: section.source!,
-                      onPlayEpisode: onPlayEpisode,
-                    ),
-                  ],
+        final scrapeMode =
+            context.watch<LabsSettingsProvider>().webDavLibraryScrapeMode;
+        final collection = scrapeMode == LibraryScrapeMode.tmdbId
+            ? CloudMediaCatalogCollectionView(
+                key: material.ValueKey<String>('webdav-catalog-${section.id}'),
+                onPlayEpisode: onPlayEpisode,
+              )
+            : AdaptiveMediaCollectionView(
+                key: material.ValueKey<String>('webdav-original-${section.id}'),
+                source: section.source!,
+                onPlayEpisode: onPlayEpisode,
+              );
+        if (AppDisplaySurfaceScope.of(context) ==
+                AppDisplaySurface.desktopTablet &&
+            !_useTelevisionMediaLibraryLayout(context)) {
+          return collection;
+        }
+        return material.Column(
+          children: [
+            material.Padding(
+              padding: const material.EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: material.Align(
+                alignment: material.Alignment.centerRight,
+                child: material.TextButton.icon(
+                  onPressed: () => showCloudMediaScanProgressDialog(context),
+                  icon: const material.Icon(material.Icons.query_stats),
+                  label: const material.Text('刮削进度'),
                 ),
               ),
-            ],
-          ),
+            ),
+            const CloudMediaScanProgressPanel(),
+            material.Expanded(child: collection),
+          ],
         );
       }
       return AdaptiveMediaCollectionView(
@@ -509,99 +517,78 @@ class _DesktopMediaLibraryScaffold extends material.StatelessWidget {
         material.Theme.of(context).brightness == material.Brightness.dark;
     final idleColor =
         isDark ? material.Colors.white60 : material.Colors.black54;
-    return material.Column(
-      children: [
-        material.Padding(
-          padding: const material.EdgeInsets.fromLTRB(6, 12, 32, 0),
-          child: material.Row(
-            crossAxisAlignment: material.CrossAxisAlignment.end,
-            children: [
+    final showProgress =
+        selectedSection?.source == UnifiedMediaLibrarySource.webdav;
+    return material.Column(children: [
+      material.LayoutBuilder(builder: (context, constraints) {
+        final compact = constraints.maxWidth < 1150;
+        material.Widget action(material.IconData icon, String label,
+            material.VoidCallback onPressed,
+            {material.Color? color}) {
+          return material.Tooltip(
+              message: label,
+              child: HoverScaleTextButton(
+                onPressed: onPressed,
+                idleColor: color ?? idleColor,
+                hoverColor: AppAccentColors.current,
+                padding: const material.EdgeInsets.symmetric(horizontal: 8),
+                child: material.SizedBox(
+                    height: 48,
+                    child: material.Row(
+                        mainAxisSize: material.MainAxisSize.min,
+                        children: [
+                          material.Icon(icon, size: 18),
+                          if (!compact) ...[
+                            const material.SizedBox(width: 6),
+                            material.Text(label,
+                                style: const material.TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: material.FontWeight.w600)),
+                          ],
+                        ])),
+              ));
+        }
+
+        return material.Padding(
+            padding: const material.EdgeInsets.symmetric(horizontal: 12),
+            child: material.Row(children: [
               material.Expanded(
-                child: material.SingleChildScrollView(
-                  scrollDirection: material.Axis.horizontal,
-                  child: material.Row(
-                    children: [
-                      for (final section in sections)
-                        _DesktopSectionButton(
-                          section: section,
-                          selected: section.id == selectedSection?.id,
-                          onPressed: () => onSectionSelected(section.id),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              const material.SizedBox(width: 8),
-              if (sections.isNotEmpty) ...[
-                HoverScaleTextButton(
-                  onPressed: () => _showSectionOrderEditor(
-                    context,
-                    sections,
-                    onSectionOrderChanged,
-                  ),
-                  idleColor: idleColor,
-                  hoverColor: AppAccentColors.current,
-                  padding: material.EdgeInsets.zero,
-                  child: const material.Row(
-                    mainAxisSize: material.MainAxisSize.min,
-                    children: [
-                      material.Icon(material.Icons.swap_vert, size: 18),
-                      material.SizedBox(width: 6),
-                      material.Text(
-                        '排序',
-                        style: material.TextStyle(
-                          fontSize: 18,
-                          fontWeight: material.FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const material.SizedBox(width: 12),
-              ],
-              HoverScaleTextButton(
-                onPressed: onRemoteAccess,
-                idleColor: idleColor,
-                hoverColor: AppAccentColors.current,
-                padding: material.EdgeInsets.zero,
-                child: const material.Row(
-                  mainAxisSize: material.MainAxisSize.min,
-                  children: [
-                    material.Icon(material.Icons.link, size: 18),
-                    material.SizedBox(width: 6),
-                    material.Text('远程访问',
-                        style: material.TextStyle(
-                            fontSize: 18,
-                            fontWeight: material.FontWeight.bold)),
-                  ],
-                ),
-              ),
-              const material.SizedBox(width: 12),
-              HoverScaleTextButton(
-                onPressed: onAddMedia,
-                idleColor: idleColor,
-                hoverColor: AppAccentColors.current,
-                padding: material.EdgeInsets.zero,
-                child: const material.Row(
-                  mainAxisSize: material.MainAxisSize.min,
-                  children: [
-                    material.Icon(material.Icons.add_to_queue_outlined,
-                        size: 18),
-                    material.SizedBox(width: 6),
-                    material.Text('添加媒体',
-                        style: material.TextStyle(
-                            fontSize: 18,
-                            fontWeight: material.FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const material.SizedBox(height: 8),
-        material.Expanded(child: child),
-      ],
-    );
+                  child: material.SingleChildScrollView(
+                      scrollDirection: material.Axis.horizontal,
+                      child: material.Row(children: [
+                        for (final section in sections)
+                          _DesktopSectionButton(
+                              section: section,
+                              selected: section.id == selectedSection?.id,
+                              onPressed: () => onSectionSelected(section.id)),
+                      ]))),
+              if (sections.isNotEmpty)
+                action(
+                    material.Icons.swap_vert,
+                    '排序',
+                    () => _showSectionOrderEditor(
+                        context, sections, onSectionOrderChanged)),
+              action(material.Icons.link, '远程访问', onRemoteAccess),
+              action(material.Icons.add_to_queue_outlined, '添加媒体', onAddMedia),
+              if (showProgress)
+                material.AnimatedBuilder(
+                    animation: CloudMediaScanProgress.instance,
+                    builder: (context, _) {
+                      final progress = CloudMediaScanProgress.instance;
+                      return action(
+                          progress.isScanning
+                              ? material.Icons.sync
+                              : material.Icons.query_stats,
+                          progress.isScanning ? '刮削中' : '刮削进度',
+                          () => showCloudMediaScanProgressDialog(context),
+                          color: progress.hasActivity
+                              ? AppAccentColors.current
+                              : idleColor);
+                    }),
+            ]));
+      }),
+      material.Expanded(child: child),
+    ]);
   }
 }
 
@@ -628,33 +615,32 @@ class _DesktopSectionButton extends material.StatelessWidget {
             .colorScheme
             .onSurface
             .withValues(alpha: 0.58);
-    return material.Padding(
-      padding: const material.EdgeInsets.symmetric(horizontal: 4),
-      child: HoverScaleTextButton(
-        onPressed: onPressed,
-        idleColor: color,
-        hoverColor: AppAccentColors.current,
-        padding: const material.EdgeInsets.fromLTRB(10, 8, 10, 12),
-        child: material.Column(
-          mainAxisSize: material.MainAxisSize.min,
-          children: [
-            material.Row(
-              mainAxisSize: material.MainAxisSize.min,
-              children: [
+    return HoverScaleTextButton(
+      onPressed: onPressed,
+      idleColor: color,
+      hoverColor: AppAccentColors.current,
+      padding: const material.EdgeInsets.symmetric(horizontal: 10),
+      child: material.SizedBox(
+          height: 48,
+          child: material.Stack(
+            alignment: material.Alignment.center,
+            children: [
+              material.Row(mainAxisSize: material.MainAxisSize.min, children: [
                 material.Icon(_mediaLibrarySectionIcon(section), size: 18),
                 const material.SizedBox(width: 7),
                 material.Text(section.label, style: labelStyle),
-              ],
-            ),
-            const material.SizedBox(height: 8),
-            NipaplayLabelTabIndicator(
-              label: section.label,
-              labelStyle: labelStyle,
-              selected: selected,
-            ),
-          ],
-        ),
-      ),
+              ]),
+              material.Positioned(
+                  bottom: 2,
+                  left: 0,
+                  right: 0,
+                  child: material.Center(
+                      child: NipaplayLabelTabIndicator(
+                          label: section.label,
+                          labelStyle: labelStyle,
+                          selected: selected))),
+            ],
+          )),
     );
   }
 }

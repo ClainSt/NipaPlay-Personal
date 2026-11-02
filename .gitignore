@@ -77,4 +77,5 @@ docs/error.txt
 # 忽略 errors 和 log
 android/.kotlin/errors
 *.log
+*.hprof
 /.codex_work

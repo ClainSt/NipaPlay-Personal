@@ -113,6 +113,43 @@ void main() {
 
     await database.upsertAssets([
       {
+        'source_id': second,
+        'relative_path': 'Episode 01.mkv',
+        'work_key': '.',
+        'name': 'Episode 01.mkv',
+        'kind': 'video',
+        'category': 'review',
+      },
+      {
+        'source_id': second,
+        'relative_path': 'show.nfo',
+        'work_key': '.',
+        'name': 'show.nfo',
+        'kind': 'nfo',
+        'category': 'metadata',
+      },
+    ]);
+    await database.updateAssetRelation(
+      sourceId: second,
+      relativePath: 'Episode 01.mkv',
+      workKey: '.',
+      category: 'review',
+    );
+    await database.assignUnassociatedVideosToWork(
+      sourceId: second,
+      workKey: 'Series Root {tmdb-100565}',
+    );
+    final repairedAssets = await database.getAssets(sourceId: second);
+    final repairedVideo =
+        repairedAssets.singleWhere((row) => row['kind'] == 'video');
+    final untouchedMetadata =
+        repairedAssets.singleWhere((row) => row['kind'] == 'nfo');
+    expect(repairedVideo['work_key'], 'Series Root {tmdb-100565}');
+    expect(repairedVideo['relation_locked'], 1);
+    expect(untouchedMetadata['work_key'], '.');
+
+    await database.upsertAssets([
+      {
         'source_id': first,
         'relative_path': 'Show/SPs/clip [01].mkv',
         'work_key': 'Show',

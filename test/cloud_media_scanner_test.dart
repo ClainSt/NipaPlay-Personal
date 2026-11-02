@@ -212,6 +212,24 @@ void main() {
       expect(result.assets.single.workKey, '.');
     });
 
+    test('a selected TMDB work root owns root-level media files', () async {
+      const rootName = '86 -不存在的战区- (2021) {tmdb-100565}';
+      final scanner = CloudMediaScanner(webDav: _SeriesRootWebDavService());
+      final result = await scanner.scan(
+        connection: WebDAVConnection(
+          name: 'test',
+          url: 'https://example.invalid/dav',
+          username: '',
+          password: '',
+        ),
+        rootPath: '/$rootName',
+      );
+
+      expect(result.assets, hasLength(1));
+      expect(result.assets.single.tmdbId, 100565);
+      expect(result.assets.single.workKey, rootName);
+    });
+
     test('recognizes supported TMDB folder markers', () {
       const samples = <String>[
         '{tmdb-100565}',
@@ -307,18 +325,14 @@ void main() {
           reason: '$directory directory classification takes priority',
         );
       }
-      expect(
-        CloudMediaScanner.classifyAsset('/Show/Scans', 'cover.jpg', 'image'),
-        'scan',
-      );
-      expect(
-        CloudMediaScanner.classifyAsset('/Show/CDs', 'track.flac', 'audio'),
-        'cd',
-      );
-      expect(
-        CloudMediaScanner.classifyAsset('/Show/CDs', 'album.cue', 'cue'),
-        'cd',
-      );
+      for (final kind in ['image', 'audio', 'cue']) {
+        expect(
+          CloudMediaScanner.classifyAsset(
+              '/Show/CDs', 'unsupported.file', kind),
+          'metadata',
+          reason: 'CD and Scans are no longer catalog categories',
+        );
+      }
     });
   });
 }

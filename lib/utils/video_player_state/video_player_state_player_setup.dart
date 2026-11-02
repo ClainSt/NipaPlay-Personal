@@ -1331,11 +1331,14 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
         }
       }
       if (mediaPrepareStarted && !mediaPrepareCompleted) {
-        final detail = preferredPlaybackErrorDetail(
-          specificError: player.mediaInfo.specificErrorMessage,
-          mediaLoadError: player.mediaLoadError,
-          fallback: e,
-        );
+        final authFailure = WebDAVProxyService.instance
+            .authFailureMessageForMediaPath(videoPath);
+        final detail = authFailure ??
+            preferredPlaybackErrorDetail(
+              specificError: player.mediaInfo.specificErrorMessage,
+              mediaLoadError: player.mediaLoadError,
+              fallback: e,
+            );
         final message = '播放器打开媒体失败: $detail';
         debugPrint(
           '[VideoPlayerState] Media prepare failed for $videoPath: $detail',

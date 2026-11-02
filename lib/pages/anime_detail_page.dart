@@ -1,6 +1,9 @@
+import 'package:nipaplay/services/large_screen_ui_sfx_service.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/large_screen_window_page.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/large_screen_anime_detail_page.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/library_anime_detail_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/apple_native_media_control.dart';
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,21 +40,17 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:nipaplay/providers/appearance_settings_provider.dart';
-import 'package:nipaplay/providers/labs_settings_provider.dart';
 import 'package:nipaplay/providers/watch_history_provider.dart';
 import 'package:nipaplay/utils/globals.dart' as globals;
 import 'package:nipaplay/utils/media_source_utils.dart';
 import 'package:nipaplay/utils/network_settings.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/anime_detail_shell.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/anime_detail_metadata_sliver.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/large_screen_anime_detail_page.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/large_screen_focusable_action.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/large_screen_mode_scope.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/large_screen_home_scope.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/settings_no_ripple_theme.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/nipaplay_window.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/large_screen_window_page.dart';
-import 'package:nipaplay/services/large_screen_ui_sfx_service.dart';
 import 'package:nipaplay/services/web_remote_access_service.dart';
 import 'package:nipaplay/utils/app_accent_color.dart';
 import 'package:nipaplay/utils/app_theme.dart';
@@ -69,14 +68,9 @@ import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/media_library/adaptive_media_library_primitives.dart';
 import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_anime_detail_sections.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/cloud_cue_sheet_dialog.dart';
-import 'package:nipaplay/themes/nipaplay/widgets/cloud_scans_reader_page.dart';
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
-import 'package:nipaplay/services/cloud_media_playback_context_factory.dart';
-import 'package:nipaplay/services/cue_sheet_parser.dart';
 import 'package:nipaplay/services/webdav_service.dart';
-import 'package:nipaplay/utils/webdav_file_sorter.dart';
 
 enum _EpisodeCleanupAction {
   clearMatchInfo,
@@ -118,7 +112,7 @@ class AnimeDetailPage extends StatefulWidget {
     this.playbackDetailContext,
     this.renderInWindowScaffold = true,
     this.embeddedInPlayback = false,
-    this.useImmersiveLayout = false,
+    this.useImmersiveLayout = true,
   });
 
   @override
@@ -169,14 +163,9 @@ class AnimeDetailPage extends StatefulWidget {
     final surface = AppDisplaySurfaceScope.of(context);
     final supportsImmersiveLayout =
         surface == AppDisplaySurface.desktopTablet ||
-            surface == AppDisplaySurface.phone;
-    var useImmersiveLayout = false;
-    if (supportsImmersiveLayout) {
-      final labsSettings = context.read<LabsSettingsProvider>();
-      await labsSettings.ready;
-      if (!context.mounted) return null;
-      useImmersiveLayout = labsSettings.enableImmersiveAnimeDetail;
-    }
+            surface == AppDisplaySurface.phone ||
+            surface == AppDisplaySurface.television;
+    final useImmersiveLayout = supportsImmersiveLayout;
     if (useImmersiveLayout) {
       final enableAnimation =
           context.read<AppearanceSettingsProvider>().enablePageAnimation;
@@ -306,7 +295,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   final GlobalKey _commentsWidgetKey = GlobalKey();
   int _myCommentTimestamp = 0;
   bool _hasOpenedCommentsTab = false;
-  bool _isImmersiveDescriptionExpanded = false;
   bool _isImmersiveCommentsOpen = false;
   String? _immersiveBackdropUrl;
 
@@ -1056,88 +1044,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
             ? '/$normalizedRelative'
             : '$normalizedRoot/$normalizedRelative';
 
-    if (asset['kind'] == 'cue') {
-      try {
-        final cueText = isLocalSource
-            ? await File(fullPath).readAsString()
-            : utf8.decode(await WebDAVService.instance
-                .readFileBytes(connection!, fullPath));
-        if (!assetContext.mounted) return;
-        final tracks = CueSheetParser.parse(cueText, cuePath: relativePath);
-        if (tracks.isEmpty) {
-          BlurSnackBar.show(assetContext, 'CUE 文件中没有可播放的音频曲目');
-          return;
-        }
-        final selectedTrack = await CloudCueSheetDialog.show(
-          context: assetContext,
-          title: asset['name']?.toString() ?? '选择 CUE 曲目',
-          tracks: tracks,
-        );
-        if (selectedTrack == null || !assetContext.mounted) return;
-        final assets = await CloudMediaIndexDatabase.instance
-            .getAssets(sourceId: sourceId);
-        if (!assetContext.mounted) return;
-        Map<String, Object?>? audio;
-        for (final candidate in assets) {
-          if (candidate['relative_path'] == selectedTrack.audioRelativePath &&
-              candidate['kind'] == 'audio') {
-            audio = candidate;
-            break;
-          }
-        }
-        if (audio == null) {
-          BlurSnackBar.show(
-            assetContext,
-            '找不到 CUE 指定的音频文件：${selectedTrack.audioRelativePath}',
-          );
-          return;
-        }
-        await _openCloudAnimeAsset(assetContext, {
-          ...audio,
-          'name':
-              '${selectedTrack.number.toString().padLeft(2, '0')} - ${selectedTrack.title}',
-          'cue_start_ms': selectedTrack.startPosition.inMilliseconds,
-          'cue_track_number': selectedTrack.number,
-          'cue_tracks': tracks,
-        });
-      } catch (error) {
-        if (!assetContext.mounted) return;
-        BlurSnackBar.show(assetContext, '读取 CUE 文件失败：$error');
-      }
-      return;
-    }
-    if (asset['category'] == 'scan') {
-      final images = (await CloudMediaIndexDatabase.instance
-              .getAssets(sourceId: sourceId))
-          .where((entry) =>
-              entry['work_key'] == asset['work_key'] &&
-              entry['category'] == 'scan' &&
-              entry['kind'] == 'image')
-          .toList()
-        ..sort(
-          (a, b) => WebDAVFileSorter.naturalCompare(
-            a['relative_path']?.toString() ?? '',
-            b['relative_path']?.toString() ?? '',
-          ),
-        );
-      final initialIndex = images.indexWhere(
-        (entry) => entry['relative_path'] == relativePath,
-      );
-      if (!mounted || !assetContext.mounted) return;
-      await Navigator.of(assetContext).push<void>(
-        MaterialPageRoute(
-          builder: (_) => CloudScansReaderPage(
-            connection: connection,
-            rootPath: rootPath,
-            localRootPath: isLocalSource ? rootPath : null,
-            images: images,
-            initialIndex: initialIndex < 0 ? 0 : initialIndex,
-          ),
-        ),
-      );
-      return;
-    }
-
     final name = asset['name']?.toString() ?? '';
     final filePath = isLocalSource
         ? fullPath
@@ -1145,11 +1051,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final anime = _detailedAnime;
     final title =
         anime?.nameCn.isNotEmpty == true ? anime!.nameCn : anime?.name ?? '云媒体';
-    final relativeIdentity = asset['relative_path']?.toString() ?? '';
-    final cueTrackNumber = asset['cue_track_number'] as int?;
-    final logicalIdentity = cueTrackNumber == null
-        ? relativeIdentity
-        : '$relativeIdentity#cue-track=$cueTrackNumber';
+    final logicalIdentity = asset['relative_path']?.toString() ?? '';
     final cloudMediaKey = MediaIdentity.remotePathKey(
       source: 'cloudmedia',
       connectionId: sourceId,
@@ -1158,26 +1060,13 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final previousHistory =
         await WatchHistoryManager.getHistoryByMediaKey(cloudMediaKey);
     if (!mounted || !assetContext.mounted) return;
-    final workKey = asset['work_key']?.toString() ?? '.';
-    final playbackContext = await CloudMediaPlaybackContextFactory.create(
-      currentAsset: asset,
-      sourceId: sourceId,
-      rootPath: rootPath,
-      normalizedRoot: normalizedRoot,
-      isLocalSource: isLocalSource,
-      connectionId: connection?.id,
-      workKey: workKey,
-      title: title,
-      animeId: widget.animeId,
-    );
     final history = WatchHistoryItem(
       filePath: filePath,
       animeName: title,
       episodeTitle: name,
       animeId: widget.animeId,
       duration: previousHistory?.duration ?? 0,
-      lastPosition:
-          (asset['cue_start_ms'] as int?) ?? previousHistory?.lastPosition ?? 0,
+      lastPosition: previousHistory?.lastPosition ?? 0,
       watchProgress: previousHistory?.watchProgress ?? 0,
       lastWatchTime: previousHistory?.lastWatchTime ?? DateTime.now(),
       mediaKey: cloudMediaKey,
@@ -1189,8 +1078,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       animeId: widget.animeId,
       historyItem: history,
       mediaKey: cloudMediaKey,
-      detailContext: playbackContext,
-      initialPositionMs: asset['cue_start_ms'] as int?,
     ));
     if (didStart) _dismissDetailIfNeeded();
   }
@@ -1523,10 +1410,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildSummaryView(BangumiAnime anime) {
-    final showCloudMediaSections = context
-            .watch<LabsSettingsProvider?>()
-            ?.enableCloudAnimeDetailSections ??
-        false;
     final sharedSummary = _sharedSummary;
     final playbackDetail = _playbackDetailContext;
     final allowPlaybackOverrides =
@@ -1699,13 +1582,12 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                         SliverToBoxAdapter(
                             child: _buildDetailTags(
                                 anime, sectionTitleStyle, secondaryTextColor)),
-                        if (showCloudMediaSections)
-                          SliverToBoxAdapter(
-                            child: CloudAnimeDetailSections(
-                              animeId: anime.id,
-                              onOpenAsset: _openCloudAnimeAsset,
-                            ),
+                        SliverToBoxAdapter(
+                          child: CloudAnimeDetailSections(
+                            animeId: anime.id,
+                            onOpenAsset: _openCloudAnimeAsset,
                           ),
+                        ),
                       ],
                       if (_hasOpenedCommentsTab)
                         SliverVisibility(
@@ -2836,45 +2718,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     );
   }
 
-  List<String> _immersiveMetadata(BangumiAnime anime) {
-    final values = <String>[];
-    final type = anime.typeDescription?.trim();
-    if (type?.isNotEmpty == true) values.add(type!);
-
-    final airDate = anime.airDate?.trim();
-    if (airDate?.isNotEmpty == true) {
-      final match = RegExp(r'^(\d{4})').firstMatch(airDate!);
-      if (match != null) values.add(match.group(1)!);
-    }
-
-    final total = _getTotalEpisodeCount(anime);
-    if (total > 0) values.add('共 $total 集');
-
-    final studio = _studioFromMetadata(anime.metadata);
-    if (studio != null) values.add(studio);
-    return values;
-  }
-
-  String? _studioFromMetadata(List<String>? metadata) {
-    if (metadata == null) return null;
-    const acceptedKeys = <String>{
-      '动画制作',
-      '動畫製作',
-      '制作公司',
-      '製作公司',
-      'studio',
-    };
-    for (final item in metadata) {
-      final parts = item.split(RegExp(r'[:：]'));
-      if (parts.length < 2) continue;
-      final key = parts.first.trim().toLowerCase();
-      if (!acceptedKeys.contains(key)) continue;
-      final value = parts.sublist(1).join(':').trim();
-      if (value.isNotEmpty) return value;
-    }
-    return null;
-  }
-
   double? _immersiveBangumiRating(BangumiAnime anime) {
     final value = anime.ratingDetails?['Bangumi评分'];
     if (value is num && value > 0) return value.toDouble();
@@ -3017,6 +2860,31 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
       detail: null,
       knownHistory: lastWatched,
     );
+  }
+
+  Future<void> _restartEpisode(BangumiAnime anime, EpisodeData episode) async {
+    final history = await _historyForEpisode(anime, episode);
+    final source = _sourcePlayableForEpisode(episode);
+    if (source == null && history == null) {
+      await _playImmersiveEpisode(anime, episode);
+      return;
+    }
+    if (!mounted) return;
+    final started = await PlaybackService().play(PlayableItem(
+      videoPath: source?.videoPath ?? history!.filePath,
+      title: source?.title ?? anime.nameCn,
+      subtitle: source?.subtitle ?? episode.title,
+      animeId: source?.animeId ?? anime.id,
+      episodeId: source?.episodeId ?? episode.id,
+      historyItem: (source?.historyItem ?? history)
+          ?.copyWith(lastPosition: 0, watchProgress: 0),
+      actualPlayUrl: source?.actualPlayUrl,
+      playbackSession: source?.playbackSession,
+      detailContext: source?.detailContext,
+      mediaKey: source?.mediaKey,
+      initialPositionMs: 0,
+    ));
+    if (started && mounted) _dismissDetailIfNeeded();
   }
 
   Future<void> _playImmersivePrimary(BangumiAnime anime) async {
@@ -3335,10 +3203,6 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   }
 
   Widget _buildImmersiveActions(BangumiAnime anime) {
-    final showCloudMediaSections = context
-            .watch<LabsSettingsProvider?>()
-            ?.enableCloudAnimeDetailSections ??
-        false;
     final episodes = anime.episodeList ?? const <EpisodeData>[];
     final resolved =
         episodes.isEmpty ? null : _resolveImmersivePrimary(episodes);
@@ -3359,11 +3223,10 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
           title: '编辑 Bangumi 评分与收藏',
           value: _ImmersiveMoreAction.editBangumiRating,
         ),
-      if (showCloudMediaSections)
-        DropdownMenuItemData<_ImmersiveMoreAction>(
-          title: '正片、特典、CDs 与 Scans',
-          value: _ImmersiveMoreAction.showCloudMediaSections,
-        ),
+      DropdownMenuItemData<_ImmersiveMoreAction>(
+        title: '正片与特典关联管理',
+        value: _ImmersiveMoreAction.showCloudMediaSections,
+      ),
       if (anime.tags?.isNotEmpty == true)
         DropdownMenuItemData<_ImmersiveMoreAction>(
           title: '浏览标签',
@@ -3389,6 +3252,13 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
           detail: resolved?.detail,
           emphasis: MediaDetailActionEmphasis.primary,
           onPressed: () => _playImmersivePrimary(anime),
+        ),
+        AdaptiveMediaDetailActionButton(
+          icon: Icons.replay,
+          label: '从头播放',
+          onPressed: episodes.isEmpty
+              ? null
+              : () => _restartEpisode(anime, episodes.first),
         ),
         AdaptiveMediaDetailActionButton(
           icon: Ionicons.chatbubble_outline,
@@ -3429,157 +3299,58 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     );
   }
 
-  Widget _buildImmersiveEpisodeRail(BangumiAnime anime) {
-    final episodes = anime.episodeList ?? const <EpisodeData>[];
-    final displayed =
-        _isEpisodeListReversed ? episodes.reversed.toList() : episodes;
-    if (displayed.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无剧集',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.56)),
-        ),
-      );
-    }
-    final targetEpisode = _resolveImmersivePrimary(episodes).episode;
-    return ImmersiveEpisodeRail(
-      key: ValueKey('immersive-episode-rail-${anime.id}'),
-      episodeCount: displayed.length,
-      targetEpisodeIndex: displayed.indexWhere(
-        (episode) => episode.id == targetEpisode.id,
-      ),
-      onSelectEpisodes: () => _showImmersiveEpisodeSelector(anime),
-      itemBuilder: (context, index) {
-        final episode = displayed[index];
-        final originalIndex = episodes.indexOf(episode);
-        return FutureBuilder<WatchHistoryItem?>(
-          future: _historyForEpisode(anime, episode),
-          builder: (context, snapshot) {
-            final history = snapshot.data;
-            final sourceProgress = _sourceProgressForEpisode(episode) ?? 0;
-            final progress = history == null
-                ? sourceProgress
-                : history.watchProgress > sourceProgress
-                    ? history.watchProgress
-                    : sourceProgress;
-            final duration =
-                _hasReliableLocalDuration(history) ? history!.duration : 0;
-            final availabilityResolved =
-                _sourcePlayableAvailableForEpisode(episode) ||
-                    snapshot.connectionState == ConnectionState.done;
-            final episodeTitle = episode.title.trim();
-            // dandanplay 的 episodeTitle 自带“第N话”前缀（如“第1话 翻转孤独”），
-            // 有前缀时直接单行显示，避免与“第 N 话”重复。
-            final hasEpisodePrefix =
-                RegExp(r'^第\s*\d+\s*[话集]').hasMatch(episodeTitle);
-            return ImmersiveEpisodeCard(
-              episodeLabel: hasEpisodePrefix || episodeTitle.isEmpty
-                  ? (episodeTitle.isEmpty
-                      ? '第 ${originalIndex + 1} 话'
-                      : episodeTitle)
-                  : '第 ${originalIndex + 1} 话',
-              title:
-                  hasEpisodePrefix || episodeTitle.isEmpty ? '' : episodeTitle,
-              thumbnailPath: history?.thumbnailPath,
-              progress: progress,
-              // duration 单位为毫秒，格式化前换算为秒。
-              durationLabel:
-                  duration > 0 ? _formatPlaybackTime(duration ~/ 1000) : null,
-              isCurrent: _lastWatchedEpisode?.episodeId == episode.id,
-              isCompleted: progress >= _kFinishedWatchThreshold ||
-                  _dandanplayWatchStatus[episode.id] == true,
-              isUnavailable:
-                  availabilityResolved && !_episodeHasPlayableResource(episode),
-              onTap: snapshot.connectionState == ConnectionState.waiting &&
-                      !_sourcePlayableAvailableForEpisode(episode)
-                  ? null
-                  : () => _playEpisodeFromSourceOrHistory(
-                        anime: anime,
-                        episode: episode,
-                        historyItem: history,
-                        historyState: snapshot.connectionState,
-                        sourcePlayableAvailable:
-                            _sourcePlayableAvailableForEpisode(episode),
-                        sourcePlayable: _sourcePlayableForEpisode(episode),
-                      ),
-            );
-          },
-        );
-      },
-    );
-  }
+  Future<void> _mergeAssociatedCatalogAssets(
+      BangumiAnime anime, List<Map<String, Object?>> assets) async {
+    // Only adapt existing associations. Shared libraries retain their own source.
+    if (_sharedSummary != null) return;
+    try {
+      final database = CloudMediaIndexDatabase.instance;
+      final bangumiId = _extractBangumiSubjectId(anime);
+      final works = await database.getWorks();
+      for (final work in works) {
+        if (work['dandanplay_anime_id']?.toString() != anime.id.toString() &&
+            (bangumiId == null ||
+                work['bangumi_id']?.toString() != bangumiId.toString()))
+          continue;
+        final sourceId = work['source_id']?.toString() ?? '';
+        final root = await database.getLibraryRoot(sourceId);
+        if (root == null) continue;
+        final connectionId = root['connection_id']?.toString() ?? '';
+        final local = connectionId.startsWith('local:');
+        final connection = local
+            ? null
+            : WebDAVService.instance.getConnectionByIdOrName(connectionId);
+        if (!local && connection == null) continue;
+        final rootPath =
+            (root['local_root_path'] ?? root['root_path'])?.toString() ?? '';
+        String pathFor(Map<String, Object?> asset) {
+          final relative = asset['relative_path']?.toString() ?? '';
+          return local
+              ? p.join(rootPath, relative)
+              : MediaSourceUtils.buildWebDavPath(connection!.id,
+                  '${rootPath.replaceFirst(RegExp(r'/+$'), '')}/${relative.replaceFirst(RegExp(r'^/+'), '')}');
+        }
 
-  /// 构建沉浸式页面大标题下的副标题：日文名 / 英文名或罗马音名称。
-  ///
-  /// dandanplay 的 titles[].language 是中文描述（如“官方标题，日语”“主标题”），
-  /// 部分数据源为语言代码（ja/en/zh），两种都兼容。
-  String _buildImmersiveSubtitle(BangumiAnime anime) {
-    final entries = anime.titles ?? const <Map<String, String>>[];
-    bool isJapanese(String lang) =>
-        (lang.contains('ja') || lang.contains('日语')) && !lang.contains('罗马字');
-    bool isChinese(String lang) =>
-        lang.contains('zh') || lang.contains('cn') || lang.contains('中文');
-    bool isEnglish(String lang) => lang.contains('en') || lang.contains('英语');
-
-    String primary = '';
-    for (final entry in entries) {
-      final title = (entry['title'] ?? '').trim();
-      if (title.isEmpty) continue;
-      if (isJapanese((entry['language'] ?? '').toLowerCase())) {
-        primary = title;
-        break;
-      }
-    }
-    if (primary.isEmpty) {
-      // 回退：第一个非中文条目（排除“主标题”自身），最后回退 anime.name。
-      for (final entry in entries) {
-        final title = (entry['title'] ?? '').trim();
-        if (title.isEmpty) continue;
-        final lang = (entry['language'] ?? '').toLowerCase();
-        if (isChinese(lang) || lang.contains('主标题')) continue;
-        primary = title;
-        break;
-      }
-    }
-    if (primary.isEmpty) primary = anime.name.trim();
-    if (primary.isEmpty) return '';
-
-    String? latin;
-    for (final entry in entries) {
-      final title = (entry['title'] ?? '').trim();
-      if (title.isEmpty || title == primary) continue;
-      final lang = (entry['language'] ?? '').toLowerCase();
-      if (isEnglish(lang)) {
-        latin = title;
-        break;
-      }
-      if (lang.contains('罗马字') && _isMostlyLatinText(title)) {
-        latin ??= title;
-      }
-    }
-    if (latin == null) {
-      for (final entry in entries) {
-        final title = (entry['title'] ?? '').trim();
-        if (title.isEmpty || title == primary) continue;
-        final lang = (entry['language'] ?? '').toLowerCase();
-        if (isChinese(lang) || lang.contains('主标题')) continue;
-        if (_isMostlyLatinText(title)) {
-          latin ??= title;
+        final linked = await database.getAssets(
+            sourceId: sourceId, workKey: work['work_key'].toString());
+        final paths = assets.map((a) => a['relative_path']).toSet();
+        // A matching playable file keeps supplemental assets in the same source.
+        if (!linked.any((a) => paths.contains(pathFor(a)))) continue;
+        for (final asset in linked.where((a) => a['kind'] == 'video')) {
+          final path = pathFor(asset);
+          final index = assets.indexWhere((a) => a['relative_path'] == path);
+          if (index >= 0) {
+            assets[index] = {
+              ...assets[index],
+              'category': asset['category'],
+              'still_url': asset['still_url'] ?? assets[index]['still_url']
+            };
+          } else if (asset['category'] == 'extra') {
+            assets.add({...asset, 'playback_path': path});
+          }
         }
       }
-    }
-    if (latin == null || latin.isEmpty) return primary;
-    return '$primary / $latin';
-  }
-
-  bool _isMostlyLatinText(String text) {
-    if (text.isEmpty) return false;
-    var latinCount = 0;
-    for (final rune in text.runes) {
-      final ch = String.fromCharCode(rune);
-      if (RegExp(r'[A-Za-zÀ-ÿ]').hasMatch(ch)) latinCount++;
-    }
-    return latinCount / text.runes.length >= 0.6;
+    } catch (_) {/* Optional catalog data must not hide playable episodes. */}
   }
 
   Widget _buildImmersiveContent() {
@@ -3592,7 +3363,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     final anime = _detailedAnime;
     if (_error != null || anime == null) {
       return ColoredBox(
-        color: const Color(0xFF080B12),
+        color: const Color(0xFF1E1E1E),
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -3627,32 +3398,87 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
         : (_sharedSummary?.nameCn?.isNotEmpty == true)
             ? _sharedSummary!.nameCn!
             : anime.nameCn;
-    final displaySubtitle = _buildImmersiveSubtitle(anime);
     final summary = _immersiveSummary(anime);
 
     if (anime.id > 0 && _lastWatchedEpisode == null && !_isLoadingLastWatched) {
       _loadLastWatchedEpisode(anime.id);
     }
 
-    return ImmersiveAnimeDetailScaffold(
-      title: displayTitle.isNotEmpty ? displayTitle : anime.name,
-      subtitle: displaySubtitle,
-      backdropUrl: _immersiveBackdropUrl ?? _getPosterUrl(),
-      metadata: _immersiveMetadata(anime),
-      rating: _immersiveBangumiRating(anime),
-      description: summary.isEmpty ? null : summary,
-      descriptionExpanded: _isImmersiveDescriptionExpanded,
-      // 显隐交给 Scaffold 内部按实测溢出情况决定，不再按字符数猜测。
-      onToggleDescription: () => setState(() {
-        _isImmersiveDescriptionExpanded = !_isImmersiveDescriptionExpanded;
-      }),
-      actions: _buildImmersiveActions(anime),
-      episodeRail: _buildImmersiveEpisodeRail(anime),
+    final episodes = anime.episodeList ?? <EpisodeData>[];
+    return LibraryAnimeDetailPage(
+      key: ValueKey('library-detail-${anime.id}'),
+      sourceId: '',
+      works: const [],
+      work: {
+        'work_key': '${anime.id}',
+        'title': displayTitle.isNotEmpty ? displayTitle : anime.name,
+        'poster_url': _getPosterUrl(),
+        'overview': summary,
+        'rating': _immersiveBangumiRating(anime),
+        'bangumi_id': _extractBangumiSubjectId(anime),
+        'metadata_json': jsonEncode({
+          'backdrop_url': _immersiveBackdropUrl,
+          'date': anime.airDate,
+          'genres': [
+            if (anime.typeDescription?.isNotEmpty == true)
+              {'name': anime.typeDescription}
+          ],
+          'tags': [
+            for (final tag in anime.tags ?? <String>[]) {'name': tag}
+          ],
+        }),
+      },
+      contentRevision: Object.hash(episodes.length, _isLoadingSharedEpisodes,
+          _isLoadingPlaybackEpisodes),
+      reverseEpisodes: _isEpisodeListReversed,
+      episodeControls: TextButton.icon(
+          onPressed: () => _showImmersiveEpisodeSelector(anime),
+          icon: const Icon(Icons.list),
+          label: const Text("剧集选择")),
+      showAssociationManagement: false,
+      pathForAsset: (asset) =>
+          (asset['playback_path'] ?? asset['relative_path']).toString(),
+      assetsLoader: () async {
+        final assets = <Map<String, Object?>>[];
+        for (var i = 0; i < episodes.length; i++) {
+          final episode = episodes[i];
+          final history = await _historyForEpisode(anime, episode);
+          final source = _sourcePlayableForEpisode(episode);
+          if (history == null && source == null) continue;
+          assets.add({
+            'name': episode.title,
+            'episode_title': episode.title,
+            'episode_id': episode.id,
+            'relative_path': source?.videoPath ?? history!.filePath,
+            'kind': 'video',
+            'category': 'episode',
+            'episode_number': i + 1,
+            'still_url': history?.thumbnailPath,
+            'progress': history?.watchProgress ??
+                _sourceProgressForEpisode(episode) ??
+                0,
+          });
+        }
+        await _mergeAssociatedCatalogAssets(anime, assets);
+        return assets;
+      },
+      headerActions: _buildImmersiveActions(anime),
+      onPlay: (asset, restart) async {
+        if (asset['source_id'] != null) {
+          await _openCloudAnimeAsset(context, asset);
+          return;
+        }
+        final episode = episodes.firstWhere((e) => e.id == asset['episode_id']);
+        await _playImmersiveEpisode(anime, episode);
+      },
       onBack: _dismissDetailIfNeeded,
-      commentsPanel:
-          _hasOpenedCommentsTab ? _buildImmersiveCommentsPanel(anime) : null,
-      commentsOpen: _isImmersiveCommentsOpen,
-      onCloseComments: () => setState(() => _isImmersiveCommentsOpen = false),
+      overlay: _isImmersiveCommentsOpen
+          ? Positioned.fill(
+              child: Material(
+                  color: const Color(0xFF242424),
+                  child: _buildImmersiveCommentsPanel(anime)),
+            )
+          : null,
     );
   }
 
@@ -3678,14 +3504,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
               // labelLarge 替换式注入 DefaultTextStyle，绕过 Scaffold 根部
               // 的 zh-Hans locale，导致 CJK 字形退回日文变体。
               data: AppTheme.applyHansLocale(
-                ThemeData.dark(useMaterial3: false).copyWith(
+                Theme.of(context).copyWith(
                   colorScheme: ThemeData.dark(useMaterial3: false)
                       .colorScheme
                       .copyWith(primary: AppAccentColors.current),
                 ),
               ),
               child: Material(
-                color: const Color(0xFF080B12),
+                color: const Color(0xFF1E1E1E),
                 child: _buildImmersiveContent(),
               ),
             ),

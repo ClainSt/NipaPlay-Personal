@@ -503,10 +503,14 @@ class BangumiApiService {
 
     if (result['success']) {
       debugPrint('[Bangumi API] 收藏添加成功');
-      unawaited(QuarterlyReviewCache.instance.recordCollectionPatch(
-        subjectId, _userInfo?['username']?.toString() ?? '',
-        rating: rate, comment: comment,
-      ).catchError((Object _) {}));
+      unawaited(QuarterlyReviewCache.instance
+          .recordCollectionPatch(
+            subjectId,
+            _userInfo?['username']?.toString() ?? '',
+            rating: rate,
+            comment: comment,
+          )
+          .catchError((Object _) {}));
     } else {
       debugPrint('[Bangumi API] 收藏添加失败: ${result['message']}');
     }
@@ -546,10 +550,14 @@ class BangumiApiService {
 
     if (result['success']) {
       debugPrint('[Bangumi API] 收藏状态更新成功');
-      await QuarterlyReviewCache.instance.recordCollectionPatch(
-        subjectId, username,
-        rating: rate, comment: comment,
-      ).catchError((Object _) {});
+      await QuarterlyReviewCache.instance
+          .recordCollectionPatch(
+            subjectId,
+            username,
+            rating: rate,
+            comment: comment,
+          )
+          .catchError((Object _) {});
     } else {
       debugPrint('[Bangumi API] 收藏状态更新失败: ${result['message']}');
     }
@@ -765,10 +773,25 @@ class BangumiApiService {
 
       final total = payload['total'] as int?;
       offset += page.length;
-      if (page.isEmpty || page.length < pageSize || total == null || offset >= total) {
+      if (page.isEmpty ||
+          page.length < pageSize ||
+          total == null ||
+          offset >= total) {
         return episodes;
       }
     }
+  }
+
+  /// Optional character strip for the cloud detail presentation.
+  static Future<List<Map<String, dynamic>>> getPublicSubjectCharacters(int subjectId) async {
+    final baseUrl = await getBaseUrl();
+    final response = await http.get(
+      WebRemoteAccessService.proxyUri(Uri.parse('$baseUrl/v0/subjects/$subjectId/characters')),
+      headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
+    ).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) return [];
+    final payload = json.decode(response.body);
+    return payload is List ? payload.whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList() : [];
   }
 
   /// 获取公开的条目详情，无需用户授权。
@@ -792,6 +815,45 @@ class BangumiApiService {
       throw const FormatException('Bangumi 条目详情响应格式无效');
     }
     return Map<String, dynamic>.from(payload);
+  }
+
+  /// Search public anime subjects without requiring the user's Bangumi token.
+  static Future<List<Map<String, dynamic>>> searchPublicAnimeSubjects(
+    String keyword, {
+    int limit = 10,
+  }) async {
+    final baseUrl = await getBaseUrl();
+    final response = await http
+        .post(
+          WebRemoteAccessService.proxyUri(
+            Uri.parse('$baseUrl/v0/search/subjects'),
+          ),
+          headers: <String, String>{
+            'User-Agent': _userAgent,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode({
+            'keyword': keyword,
+            'filter': <String, dynamic>{
+              'type': [2]
+            },
+            'limit': limit,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw StateError('搜索 Bangumi 动画失败: HTTP ${response.statusCode}');
+    }
+
+    final payload = json.decode(response.body);
+    if (payload is! Map || payload['data'] is! List) {
+      throw const FormatException('Bangumi 搜索响应格式无效');
+    }
+    return (payload['data'] as List)
+        .whereType<Map>()
+        .map((subject) => Map<String, dynamic>.from(subject))
+        .toList(growable: false);
   }
 
   /// 测试API连接
@@ -858,11 +920,11 @@ class BangumiApiService {
       final nextBaseUrl = await getNextBaseUrl();
       final targetUri =
           Uri.parse('$nextBaseUrl/p1/subjects/$subjectId/comments').replace(
-            queryParameters: {
-              'limit': limit.toString(),
-              'offset': offset.toString(),
-            },
-          );
+        queryParameters: {
+          'limit': limit.toString(),
+          'offset': offset.toString(),
+        },
+      );
       debugPrint(
         '[Bangumi Comments] 请求 subjectId=$subjectId, offset=$offset, timeout=${timeout.inSeconds}s',
       );
@@ -870,12 +932,10 @@ class BangumiApiService {
       final uri = WebRemoteAccessService.proxyUri(targetUri);
       debugPrint('[Bangumi Comments] 代理后URI: $uri');
 
-      final response = await http
-          .get(
-            uri,
-            headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
-          )
-          .timeout(timeout);
+      final response = await http.get(
+        uri,
+        headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
+      ).timeout(timeout);
       debugPrint('[Bangumi Comments] 状态码: ${response.statusCode}');
       final preview = response.body.length > 300
           ? response.body.substring(0, 300)
@@ -924,8 +984,8 @@ class BangumiApiService {
       debugPrint('[Dandanplay Comments] 代理后URI: $uri');
 
       final appSecret = await DandanplayService.getAppSecret();
-      final timestamp = (DateTime.now().toUtc().millisecondsSinceEpoch / 1000)
-          .round();
+      final timestamp =
+          (DateTime.now().toUtc().millisecondsSinceEpoch / 1000).round();
       final apiPath = '/api/v2/bangumi/$bangumiId/comments';
 
       final Map<String, String> headers = {
@@ -966,13 +1026,11 @@ class BangumiApiService {
             }
           }
 
-          total =
-              body['count'] as int? ??
+          total = body['count'] as int? ??
               body['total'] as int? ??
               commentList?.length ??
               0;
-          final bool hasMore =
-              body['hasMore'] as bool? ??
+          final bool hasMore = body['hasMore'] as bool? ??
               (commentList != null && commentList.length >= 20);
 
           if (commentList != null) {

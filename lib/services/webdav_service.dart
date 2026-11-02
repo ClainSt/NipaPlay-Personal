@@ -988,7 +988,20 @@ class WebDAVService {
       return true;
     }
     final statusMessage = e.response?.statusMessage?.toLowerCase() ?? '';
-    return statusMessage.contains('method not allowed');
+    if (statusMessage.contains('method not allowed')) return true;
+
+    // Some WebDAV servers close a reused keep-alive socket while the client
+    // is issuing PROPFIND. The Dio client reports this as an unknown error
+    // (often "HttpException: Broken pipe"). Retry through our one-shot
+    // non-persistent HTTP client instead of aborting the catalog scan.
+    final transportError = '${e.message ?? ''} ${e.error ?? ''}'.toLowerCase();
+    return e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        transportError.contains('broken pipe') ||
+        transportError.contains('connection reset') ||
+        transportError.contains('socketexception');
   }
 
   bool _isAuthorizationFailure(DioException e) {

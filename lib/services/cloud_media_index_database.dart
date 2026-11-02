@@ -251,6 +251,24 @@ class CloudMediaIndexDatabase {
     );
   }
 
+  /// Repairs old scans of a library root that is itself a TMDB work folder.
+  /// Older indexes could keep its videos under the synthetic unassociated key
+  /// even though the root name already identifies their only work.
+  Future<void> assignUnassociatedVideosToWork({
+    required String sourceId,
+    required String workKey,
+  }) async {
+    final normalizedWorkKey = workKey.trim();
+    if (normalizedWorkKey.isEmpty || normalizedWorkKey == '.') return;
+    final db = await database;
+    await db.update(
+      'cloud_media_asset',
+      {'work_key': normalizedWorkKey},
+      where: "source_id = ? AND kind = 'video' AND work_key = '.'",
+      whereArgs: [sourceId],
+    );
+  }
+
   /// Prunes catalog rows that disappeared during a completed, successful
   /// scan. Callers must never invoke this when remote enumeration failed.
   Future<void> removeMissingAssets({
@@ -285,6 +303,21 @@ class CloudMediaIndexDatabase {
         )
       ''', [sourceId]);
     });
+  }
+
+  /// Removes automatically-created work rows after assets are reassigned.
+  /// User-locked manual works are kept even while empty.
+  Future<void> removeOrphanedWorks(String sourceId) async {
+    final db = await database;
+    await db.delete(
+      'cloud_media_work',
+      where: '''source_id = ? AND relation_locked = 0 AND NOT EXISTS (
+        SELECT 1 FROM cloud_media_asset
+        WHERE cloud_media_asset.source_id = cloud_media_work.source_id
+          AND cloud_media_asset.work_key = cloud_media_work.work_key
+      )''',
+      whereArgs: [sourceId],
+    );
   }
 
   Future<Map<String, Object?>?> getLibraryRoot(String libraryId) async {
@@ -820,6 +853,42 @@ class CloudMediaIndexDatabase {
     });
   }
 
+  Future<void> cacheTmdbEpisodeSeasons({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required Map<String, dynamic> seasons,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query('cloud_media_work',
+          where: 'source_id = ? AND work_key = ? AND tmdb_tv_id = ?',
+          whereArgs: [sourceId, workKey, tmdbId]);
+      if (rows.isEmpty) return;
+      Map<String, dynamic> metadata;
+      try {
+        metadata = Map<String, dynamic>.from(
+            jsonDecode(rows.single['metadata_json']?.toString() ?? '{}')
+                as Map);
+      } catch (_) {
+        metadata = {};
+      }
+      final previous = metadata['tmdb_episode_seasons'];
+      metadata['tmdb_episode_seasons'] = {
+        if (previous is Map) ...previous,
+        ...seasons,
+      };
+      await txn.update(
+          'cloud_media_work',
+          {
+            'metadata_json': jsonEncode(metadata),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          },
+          where: 'source_id = ? AND work_key = ? AND tmdb_tv_id = ?',
+          whereArgs: [sourceId, workKey, tmdbId]);
+    });
+  }
+
   Future<List<Map<String, Object?>>> getWorks({String? sourceId}) async {
     final db = await database;
     return db.query(
@@ -828,6 +897,78 @@ class CloudMediaIndexDatabase {
       whereArgs: sourceId == null ? null : [sourceId],
       orderBy: 'title_cn COLLATE NOCASE, title COLLATE NOCASE',
     );
+  }
+
+  Future<void> updateWorkPoster({
+    required String sourceId,
+    required String workKey,
+    required String posterUrl,
+    int? bangumiId,
+  }) async {
+    final db = await database;
+    await db.update(
+      'cloud_media_work',
+      {
+        'poster_url': posterUrl,
+        if (bangumiId != null) 'bangumi_id': bangumiId,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'source_id = ? AND work_key = ? AND relation_locked = 0',
+      whereArgs: [sourceId, workKey],
+    );
+  }
+
+  Future<void> upsertBangumiWorkMetadata({
+    required String sourceId,
+    required String workKey,
+    required int bangumiId,
+    required String title,
+    required String titleCn,
+    required String overview,
+    required String posterUrl,
+    required String metadataJson,
+    int? tmdbId,
+    String tmdbType = 'unknown',
+    double? rating,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.rawInsert('''
+      INSERT INTO cloud_media_work
+        (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id,
+         tmdb_movie_id, tmdb_unknown_id, bangumi_id, title, title_cn,
+         overview, poster_url, rating, metadata_json, metadata_status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'matched', ?)
+      ON CONFLICT(source_id, work_key) DO UPDATE SET
+        tmdb_id=COALESCE(excluded.tmdb_id, cloud_media_work.tmdb_id),
+        tmdb_type=CASE WHEN excluded.tmdb_id IS NULL
+                       THEN cloud_media_work.tmdb_type ELSE excluded.tmdb_type END,
+        tmdb_tv_id=COALESCE(excluded.tmdb_tv_id, cloud_media_work.tmdb_tv_id),
+        tmdb_movie_id=COALESCE(excluded.tmdb_movie_id, cloud_media_work.tmdb_movie_id),
+        tmdb_unknown_id=COALESCE(excluded.tmdb_unknown_id, cloud_media_work.tmdb_unknown_id),
+        bangumi_id=excluded.bangumi_id, title=excluded.title,
+        title_cn=excluded.title_cn, overview=excluded.overview,
+        poster_url=excluded.poster_url, rating=excluded.rating,
+        metadata_json=excluded.metadata_json, metadata_status='matched',
+        updated_at=excluded.updated_at
+      WHERE cloud_media_work.relation_locked=0
+    ''', [
+      sourceId,
+      workKey,
+      tmdbId,
+      tmdbId == null ? 'unknown' : tmdbType,
+      tmdbType == 'tv' ? tmdbId : null,
+      tmdbType == 'movie' ? tmdbId : null,
+      tmdbId != null && tmdbType == 'unknown' ? tmdbId : null,
+      bangumiId,
+      title,
+      titleCn,
+      overview,
+      posterUrl,
+      rating,
+      metadataJson,
+      now,
+    ]);
   }
 
   Future<void> upsertPendingWork({
@@ -886,6 +1027,57 @@ class CloudMediaIndexDatabase {
                       THEN cloud_media_work.title_cn ELSE excluded.title_cn END,
         updated_at=excluded.updated_at
     ''', [sourceId, workKey, title, title, now]);
+  }
+
+  Future<void> upsertDandanplayWorkMetadata({
+    required String sourceId,
+    required String workKey,
+    required Map<String, dynamic> response,
+    required BangumiAnime anime,
+  }) async {
+    final db = await database;
+    final bangumi = response['bangumi'];
+    final rawAnimeId =
+        bangumi is Map ? bangumi['animeId'] : response['animeId'];
+    final tmdbId = bangumi is Map
+        ? int.tryParse(
+            (bangumi['tmdbId'] ?? bangumi['tmdb_id'])?.toString() ?? '')
+        : int.tryParse(
+            (response['tmdbId'] ?? response['tmdb_id'])?.toString() ?? '');
+    await db.rawInsert('''
+      INSERT INTO cloud_media_work
+        (source_id, work_key, tmdb_id, tmdb_type, tmdb_tv_id,
+         dandanplay_anime_id, bangumi_id, title, title_cn, overview,
+         poster_url, rating, metadata_json, metadata_status, updated_at)
+      VALUES (?, ?, ?, 'tv', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'matched', ?)
+      ON CONFLICT(source_id, work_key) DO UPDATE SET
+        tmdb_id=COALESCE(excluded.tmdb_id, cloud_media_work.tmdb_id),
+        tmdb_type=CASE WHEN excluded.tmdb_id IS NULL THEN cloud_media_work.tmdb_type ELSE 'tv' END,
+        tmdb_tv_id=COALESCE(excluded.tmdb_tv_id, cloud_media_work.tmdb_tv_id),
+        dandanplay_anime_id=excluded.dandanplay_anime_id,
+        bangumi_id=excluded.bangumi_id, title=excluded.title,
+        title_cn=excluded.title_cn, overview=excluded.overview,
+        poster_url=excluded.poster_url, rating=excluded.rating,
+        metadata_json=excluded.metadata_json, metadata_status='matched',
+        updated_at=excluded.updated_at
+      WHERE cloud_media_work.relation_locked=0
+    ''', [
+      sourceId,
+      workKey,
+      tmdbId,
+      tmdbId,
+      int.tryParse(rawAnimeId?.toString() ?? ''),
+      bangumi is Map<String, dynamic>
+          ? AnimeInfoParse.getBangumiTvId(bangumi)
+          : null,
+      anime.name,
+      anime.nameCn,
+      anime.summary,
+      anime.imageUrl,
+      anime.rating,
+      jsonEncode(response),
+      DateTime.now().toUtc().toIso8601String(),
+    ]);
   }
 
   Future<String> createManualWork({

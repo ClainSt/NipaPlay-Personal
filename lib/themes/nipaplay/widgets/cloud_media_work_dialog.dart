@@ -34,8 +34,6 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
   static const _categories = <String, String>{
     'episode': '正片',
     'extra': '特典',
-    'cd': 'CDs',
-    'scan': 'Scans',
     'review': '待确认',
     'metadata': '其他',
   };
@@ -279,8 +277,10 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
             if (all == null) {
               return const Center(child: CircularProgressIndicator());
             }
-            final related =
-                all.where((asset) => asset['work_key'] == workKey).toList();
+            final related = all
+                .where((asset) =>
+                    asset['work_key'] == workKey && asset['kind'] == 'video')
+                .toList();
             final tabs = <(String, String)>[
               ('all', '全部'),
               for (final entry in _categories.entries) (entry.key, entry.value),
@@ -332,13 +332,7 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
                             final asset = shown[index];
                             final category =
                                 asset['category']?.toString() ?? '';
-                            final openable = const {
-                                  'episode',
-                                  'extra',
-                                  'cd',
-                                  'scan'
-                                }.contains(category) ||
-                                asset['kind'] == 'cue';
+                            final openable = asset['kind'] == 'video';
                             return ListTile(
                               leading: Icon(_iconFor(asset)),
                               title: Text(asset['name']?.toString() ?? '',
@@ -406,15 +400,10 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
   }
 
   static IconData _iconFor(Map<String, Object?> asset) {
-    if (asset['kind'] == 'cue') return Icons.queue_music;
     switch (asset['category']) {
       case 'episode':
       case 'extra':
         return Icons.movie_outlined;
-      case 'cd':
-        return Icons.album_outlined;
-      case 'scan':
-        return Icons.menu_book_outlined;
       default:
         return Icons.help_outline;
     }

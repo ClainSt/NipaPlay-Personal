@@ -34,6 +34,13 @@ void main() {
                   'kind': 'video',
                   'category': 'episode',
                 },
+                {
+                  'work_key': '.',
+                  'relative_path': 'metadata.nfo',
+                  'name': 'metadata.nfo',
+                  'kind': 'nfo',
+                  'category': 'metadata',
+                },
               ],
             ),
           ],
@@ -48,7 +55,18 @@ void main() {
     }
 
     expect(find.text('Indexed Anime'), findsOneWidget);
-    expect(find.text('1 部作品 · 1 个文件'), findsOneWidget);
-    expect(find.text('/Anime'), findsOneWidget);
+    expect(find.byType(InkWell), findsWidgets);
+    expect(find.text('未关联文件'), findsNothing);
+    expect(find.text('/Anime'), findsNothing);
+    final grid = tester.widget<GridView>(find.byType(GridView));
+    final layout =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(layout.mainAxisExtent, isNotNull);
+    final title = tester.getRect(find.text('Indexed Anime'));
+    final card = tester.getRect(find
+        .ancestor(
+            of: find.text('Indexed Anime'), matching: find.byType(InkWell))
+        .first);
+    expect(card.bottom - title.bottom, lessThan(1));
   });
 }
