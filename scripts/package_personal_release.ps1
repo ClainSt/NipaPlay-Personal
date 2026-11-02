@@ -29,16 +29,23 @@ try {
         & $Flutter build windows --release --no-pub
         if ($LASTEXITCODE -ne 0) { throw 'Windows Release build failed.' }
 
-        # flutter test can leave an ignored plugin registrant that includes the
-        # dev-only integration_test plugin. Recreate it for the Android release
-        # variant so javac does not try to link a test-only plugin into the APK.
-        $generatedPluginRegistrant = Join-Path $repo 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'
-        if (Test-Path $generatedPluginRegistrant) {
-            Remove-Item -LiteralPath $generatedPluginRegistrant -Force
-        }
-
-        & $Flutter build apk --release --target-platform android-arm64 --no-pub
+        # Run pub/tooling regeneration for the release variant. Flutter filters
+        # dev-only plugins here; deleting the registrant while using --no-pub
+        # produces a build that compiles but cannot register runtime plugins.
+        & $Flutter build apk --release --target-platform android-arm64
         if ($LASTEXITCODE -ne 0) { throw 'Android Release APK build failed.' }
+
+        $generatedPluginRegistrant = Join-Path $repo 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'
+        if (-not (Test-Path $generatedPluginRegistrant)) {
+            throw 'Flutter did not generate the Android release plugin registrant.'
+        }
+        $pluginRegistrantSource = Get-Content $generatedPluginRegistrant -Raw
+        if ($pluginRegistrantSource -notmatch 'SharedPreferencesPlugin') {
+            throw 'Android release plugin registrant is missing SharedPreferences.'
+        }
+        if ($pluginRegistrantSource -match 'integration_test') {
+            throw 'Android release plugin registrant unexpectedly includes integration_test.'
+        }
     }
     if (-not (Test-Path (Join-Path $windowsBuild 'NipaPlay.exe'))) {
         throw "Windows Release directory not found: $windowsBuild"

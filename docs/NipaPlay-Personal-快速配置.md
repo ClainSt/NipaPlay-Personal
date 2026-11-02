@@ -66,6 +66,7 @@ Windows 设置和数据库保存在 `%APPDATA%\com.aimessoft\NipaPlay Personal`�
 | 全项目静态分析 | 未通过 | 完整分析报告为 5,479 条 issue，其中包含 build 生成物、vendored 第三方代码及仓库既有 lint；不将其记为通过。 |
 | Windows 发布构建 | 通过 | `scripts/package_personal_release.ps1 -Build` 完整执行成功；程序隐藏启动后保持运行 8 秒。 |
 | Android 发布构建 | 通过 | 同一打包脚本成功生成 arm64 APK；`apksigner` 验证 v2 签名，证书 SHA-256 为 `a083e7205dc014dbfd1a0b52f67a3f91a934ffe94b0f3d27ee268166570b4a9e`。 |
+| Android 模拟器运行 | 通过 | Android 15 / Pixel 6 x86_64 验收构建安装并进入首页；Labs 三个个人开关可交互，状态在强制停止并重启后保留；启动时无插件注册或 SharedPreferences 通道错误。正式交付仍为 arm64。 |
 | 真实设备与服务器 | 未验证 | 当前环境没有连接的 Android 设备，也未配置用户的 CloudDrive2/WebDAV 媒体目录；真实播放、阅读、跨设备网络同步需在目标设备上验收。 |
 
-最新产物位于 `release/NipaPlay-Personal-Windows-Portable.zip` 和 `release/NipaPlay-Personal-Android.apk`。重新打包脚本会清理可能由测试残留的 Android 测试插件注册表，再为 release 重新生成，避免测试专用插件进入正式变体。
+最新产物位于 `release/NipaPlay-Personal-Windows-Portable.zip` 和 `release/NipaPlay-Personal-Android.apk`。Android release 构建会让 Flutter 按 release 依赖重新生成插件注册器；打包脚本校验 SharedPreferences 注册存在且不含 `integration_test` 后才复制 APK，避免生成 APK 缺少运行时插件。
