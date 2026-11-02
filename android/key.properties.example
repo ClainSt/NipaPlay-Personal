@@ -1,0 +1,6 @@
+# Copy to key.properties and replace the placeholders. Never commit key.properties.
+# Paths are resolved from android/app/build.gradle.
+storeFile=../../.personal-signing/NipaPlayPersonal.jks
+storePassword=REPLACE_WITH_STORE_PASSWORD
+keyPassword=REPLACE_WITH_KEY_PASSWORD
+keyAlias=nipaplay-personal

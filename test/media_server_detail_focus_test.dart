@@ -1,3 +1,4 @@
+import 'package:nipaplay/themes/nipaplay/widgets/library_anime_detail_page.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -64,6 +65,22 @@ void main() {
       ..accessToken = null
       ..userId = null
       ..isConnected = false;
+  });
+
+  testDetailWidgets(
+      'desktop uses shared detail by default and keeps season selection',
+      (tester) async {
+    fixture.completeImmediately = true;
+    await _openDetail(tester, largeScreen: false);
+    await tester.pumpAndSettle();
+    expect(find.byType(LibraryAnimeDetailPage), findsOneWidget);
+    expect(find.text('Episode s1-1'), findsOneWidget);
+    expect(find.text('正片  2'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Season 2'));
+    await tester.pumpAndSettle();
+    expect(find.text('Episode s2-1'), findsOneWidget);
+    expect(find.text('Episode s1-1'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testDetailWidgets('root detail route retains the home-only large-screen mode',
@@ -237,7 +254,8 @@ FocusNode _focusOf(WidgetTester tester, String label, {bool first = false}) {
   return Focus.of(tester.element(first ? finder.first : finder));
 }
 
-Future<FocusNode> _openDetail(WidgetTester tester) async {
+Future<FocusNode> _openDetail(WidgetTester tester,
+    {bool largeScreen = true}) async {
   tester.view.physicalSize = const Size(1280, 720);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -259,7 +277,7 @@ Future<FocusNode> _openDetail(WidgetTester tester) async {
           child: child!,
         ),
         home: NipaplayLargeScreenModeScope(
-          isActive: true,
+          isActive: largeScreen,
           child: Builder(
             builder: (context) => NipaplayLargeScreenContentPage(
               child: Center(

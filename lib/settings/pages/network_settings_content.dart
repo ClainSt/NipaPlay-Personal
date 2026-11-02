@@ -832,10 +832,9 @@ class _NetworkSettingsContentState extends State<NetworkSettingsContent> {
     if (routing == null || routing.detectedRegion == null) {
       return base;
     }
-    final regionText =
-        routing.detectedRegion == NetworkSettings.autoRegionChina
-            ? _text(context, '已判定为国内网络', '已判定為國內網路', 'Region: China')
-            : _text(context, '已判定为海外网络', '已判定為海外網路', 'Region: Overseas');
+    final regionText = routing.detectedRegion == NetworkSettings.autoRegionChina
+        ? _text(context, '已判定为国内网络', '已判定為國內網路', 'Region: China')
+        : _text(context, '已判定为海外网络', '已判定為海外網路', 'Region: Overseas');
     return '$base\n$regionText';
   }
 

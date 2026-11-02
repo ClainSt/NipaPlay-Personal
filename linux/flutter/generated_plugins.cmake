@@ -3,10 +3,13 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audioplayers_linux
   desktop_drop
   dynamic_color
+  erika_flutter
   file_selector_linux
   flutter_js
+  flutter_secure_storage_linux
   fvp
   hotkey_manager_linux
   media_kit_libs_linux
@@ -14,6 +17,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   rust_lib_nipaplay
   screen_retriever_linux
   tray_manager
+  universal_gamepad
   url_launcher_linux
   volume_controller
   window_manager

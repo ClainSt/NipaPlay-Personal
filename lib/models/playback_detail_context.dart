@@ -27,6 +27,7 @@ class PlaybackDetailEpisode {
     this.playbackSession,
     this.progress,
     this.mediaKey,
+    this.startPositionMs,
   });
 
   final String id;
@@ -40,6 +41,7 @@ class PlaybackDetailEpisode {
   final PlaybackSession? playbackSession;
   final double? progress;
   final String? mediaKey;
+  final int? startPositionMs;
 }
 
 typedef PlaybackDetailEpisodeLoader = Future<List<PlaybackDetailEpisode>>

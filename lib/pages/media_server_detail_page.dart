@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:nipaplay/themes/nipaplay/widgets/library_anime_detail_page.dart';
+import 'package:nipaplay/themes/nipaplay/widgets/immersive_media_detail_route.dart';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
@@ -48,7 +51,6 @@ import 'package:nipaplay/utils/app_accent_color.dart';
 import 'package:nipaplay/app/app_display_surface.dart';
 import 'package:nipaplay/app/app_display_surface_scope.dart';
 import 'package:nipaplay/media_library/adaptive_media_library_primitives.dart';
-import 'package:nipaplay/themes/cupertino/widgets/cupertino_bottom_sheet.dart';
 
 @visibleForTesting
 Future<void> startEmbyPlaybackAndCloseDetail({
@@ -89,29 +91,21 @@ class MediaServerDetailPage extends StatefulWidget {
 
   static Future<WatchHistoryItem?> show(
       BuildContext context, String mediaId, MediaServerType serverType) {
-    if (AppDisplaySurfaceScope.of(context) == AppDisplaySurface.phone) {
-      final label =
-          serverType == MediaServerType.jellyfin ? 'Jellyfin' : 'Emby';
-      return CupertinoBottomSheet.show<WatchHistoryItem>(
+    if (NipaplayLargeScreenModeScope.isActiveOf(context)) {
+      return NipaplayWindow.show<WatchHistoryItem>(
         context: context,
-        title: '$label 详情',
-        floatingTitle: true,
-        child: MediaServerDetailPage(
-          mediaId: mediaId,
-          serverType: serverType,
-          embedded: true,
-        ),
+        enableAnimation:
+            context.read<AppearanceSettingsProvider>().enablePageAnimation,
+        child: MediaServerDetailPage(mediaId: mediaId, serverType: serverType),
       );
     }
-    // 获取外观设置Provider
-    final appearanceSettings =
-        Provider.of<AppearanceSettingsProvider>(context, listen: false);
-    final enableAnimation = appearanceSettings.enablePageAnimation;
-
-    return NipaplayWindow.show<WatchHistoryItem>(
-      context: context,
-      enableAnimation: enableAnimation,
-      child: MediaServerDetailPage(mediaId: mediaId, serverType: serverType),
+    return Navigator.of(context).push<WatchHistoryItem>(
+      ImmersiveMediaDetailPageRoute<WatchHistoryItem>(
+        enableAnimation:
+            context.read<AppearanceSettingsProvider>().enablePageAnimation,
+        builder: (_) => MediaServerDetailPage(
+            mediaId: mediaId, serverType: serverType, embedded: true),
+      ),
     );
   }
 }
@@ -355,7 +349,13 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
             _seasons = seasons;
             _isLoading = false;
 
-            _selectedSeasonId = seasons.isNotEmpty ? seasons.first.id : null;
+            _selectedSeasonId = _seasons.isEmpty ? null : _seasons.first.id;
+            for (final season in _seasons) {
+              if (season.indexNumber != 0) {
+                _selectedSeasonId = season.id;
+                break;
+              }
+            }
           });
           if (_selectedSeasonId != null) {
             unawaited(_loadEpisodesForSeason(_selectedSeasonId!));
@@ -603,9 +603,9 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
     }
   }
 
-  Future<void> _playMediaItem() async {
+  Future<void> _playMediaItem({bool restart = false}) async {
     if (!_isEpisode) {
-      await _playMovie();
+      await _playMovie(restart: restart);
       return;
     }
     try {
@@ -616,13 +616,13 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
       if (episode == null) {
         throw Exception('无法获取单集详情，请重试');
       }
-      await _playEpisode(episode);
+      await _playEpisode(episode, restart: restart);
     } catch (e) {
       if (mounted) BlurSnackBar.show(context, '播放失败: $e');
     }
   }
 
-  Future<void> _playMovie() async {
+  Future<void> _playMovie({bool restart = false}) async {
     if (_mediaDetail == null || !_isMovie) return;
     if (_isDetailAutoMatching) {
       BlurSnackBar.show(context, '正在自动匹配，请稍候');
@@ -630,7 +630,9 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
     }
 
     if (context.read<SettingsProvider>().skipDanmakuMatching) {
-      Navigator.of(context).pop(_mediaDetail!.toWatchHistoryItem());
+      final WatchHistoryItem item = _mediaDetail!.toWatchHistoryItem();
+      Navigator.of(context).pop(
+          restart ? item.copyWith(lastPosition: 0, watchProgress: 0) : item);
       return;
     }
 
@@ -686,13 +688,17 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
         if (!_detailAutoMatchCancelled && mounted) {
           BlurSnackBar.show(context, '未能找到匹配的弹幕信息，但仍可播放。');
           final basicItem = _mediaDetail!.toWatchHistoryItem();
-          Navigator.of(context).pop(basicItem);
+          Navigator.of(context).pop(restart
+              ? basicItem.copyWith(lastPosition: 0, watchProgress: 0)
+              : basicItem);
         }
         return;
       }
 
       if (mounted) {
-        Navigator.of(context).pop(playableItem);
+        Navigator.of(context).pop(restart
+            ? playableItem.copyWith(lastPosition: 0, watchProgress: 0)
+            : playableItem);
       }
     } catch (e) {
       if (mounted) {
@@ -1434,8 +1440,138 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
     );
   }
 
+  Future<List<Map<String, Object?>>> _detailAssets() async {
+    final service = widget.serverType == MediaServerType.jellyfin
+        ? JellyfinService.instance
+        : EmbyService.instance;
+    if (_isPlayableItem) {
+      final WatchHistoryItem history = _mediaDetail.toWatchHistoryItem();
+      return [
+        {
+          'kind': 'video',
+          'category': 'episode',
+          'name': _mediaDetail.name,
+          'episode_title': _mediaDetail.name,
+          'relative_path': history.filePath,
+          'progress': history.watchProgress,
+          'still_url': _getBackdropUrl(),
+        }
+      ];
+    }
+    // Server specials are real server episodes. Cloud catalog extras use their
+    // existing associations and never depend on this season convention.
+    final specialSeasons = _seasons.where((season) => season.indexNumber == 0);
+    for (final season in specialSeasons) {
+      if (!_episodesBySeasonId.containsKey(season.id)) {
+        final dynamic api = service;
+        try {
+          _episodesBySeasonId[season.id] = List<dynamic>.from(
+              await api.getSeasonEpisodes(_mediaDetail.id, season.id));
+        } catch (_) {/* Keep available main episodes visible. */}
+      }
+    }
+    final selectedIsSpecial =
+        specialSeasons.any((s) => s.id == _selectedSeasonId);
+    final episodes = <dynamic>[
+      if (!selectedIsSpecial) ...?_episodesBySeasonId[_selectedSeasonId],
+      for (final season in specialSeasons) ...?_episodesBySeasonId[season.id],
+    ];
+    return [
+      for (final episode in episodes)
+        {
+          'kind': 'video',
+          'category': episode.parentIndexNumber == 0 ? 'extra' : 'episode',
+          'name': episode.name,
+          'episode_title': episode.name,
+          'episode_number': episode.indexNumber,
+          'relative_path':
+              '${widget.serverType == MediaServerType.jellyfin ? 'jellyfin' : 'emby'}://${episode.id}',
+          'still_url': episode.imagePrimaryTag == null
+              ? null
+              : _getEpisodeImageUrl(episode, service),
+          'progress': episode.userData?.played == true
+              ? 1.0
+              : ((episode.runTimeTicks ?? 0) > 0
+                  ? (episode.userData?.playbackPositionTicks ?? 0) /
+                      episode.runTimeTicks
+                  : 0.0),
+          'server_episode': episode,
+        }
+    ];
+  }
+
+  Widget _buildLibraryDetail() {
+    return Material(
+      color: const Color(0xFF1E1E1E),
+      child: LibraryAnimeDetailPage(
+        sourceId: '',
+        works: const [],
+        showAssociationManagement: false,
+        work: {
+          'work_key': widget.mediaId,
+          'title': _mediaDetail.name,
+          'poster_url': _getPosterUrl(width: 600),
+          'overview': _mediaDetail.overview,
+          'rating': _mediaDetail.communityRating,
+          'metadata_json': jsonEncode({
+            'backdrop_url': _getBackdropUrl(),
+            'date': _mediaDetail.productionYear?.toString(),
+            'genres': _mediaDetail.genres
+          }),
+        },
+        characters: [
+          for (final actor in _mediaDetail.cast ?? [])
+            <String, dynamic>{
+              'name': actor.role ?? actor.name,
+              'images': {'medium': _getActorImageUrl(actor)},
+              'actors': [
+                {'name': actor.name}
+              ],
+            }
+        ],
+        contentRevision: Object.hash(_selectedSeasonId, _isLoading,
+            _episodesBySeasonId[_selectedSeasonId]?.length),
+        assetsLoader: _detailAssets,
+        pathForAsset: (asset) => asset['relative_path'].toString(),
+        onPlay: (asset, restart) => _isPlayableItem
+            ? _playMediaItem(restart: restart)
+            : _playEpisode(asset['server_episode'], restart: restart),
+        onBack: () => Navigator.of(context).pop(),
+        episodeControls: _isPlayableItem
+            ? null
+            : Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (final season
+                      in _seasons.where((s) => s.indexNumber != 0))
+                    ChoiceChip(
+                        label: Text(season.name),
+                        selected: season.id == _selectedSeasonId,
+                        onSelected: (_) => _loadEpisodesForSeason(season.id)),
+                  if (_isLoading)
+                    const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                  if (_error != null)
+                    TextButton(
+                        onPressed: () => _selectedSeasonId == null
+                            ? _loadMediaDetail()
+                            : _loadEpisodesForSeason(_selectedSeasonId!),
+                        child: const Text('读取剧集失败，重试')),
+                ],
+              ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_mediaDetail != null &&
+        !NipaplayLargeScreenModeScope.isActiveOf(context))
+      return _buildLibraryDetail();
     if (NipaplayLargeScreenModeScope.isActiveOf(context)) {
       return _buildLargeScreenDetailPage();
     }
@@ -1866,7 +2002,7 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
     );
   }
 
-  Future<void> _playEpisode(dynamic episode) async {
+  Future<void> _playEpisode(dynamic episode, {bool restart = false}) async {
     if (_isDetailAutoMatching) {
       BlurSnackBar.show(context, '正在自动匹配，请稍候');
       return;
@@ -1935,16 +2071,23 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
           selected,
           episodeFileSelectionHandled: true,
         );
-        if (started && detailRoute?.isCurrent == true && detailNavigator.mounted) {
+        if (started &&
+            detailRoute?.isCurrent == true &&
+            detailNavigator.mounted) {
           detailNavigator.pop();
         }
         return;
       }
       playableHistoryItem = selected.historyItem ?? playableHistoryItem;
 
-      final startPositionMs = playableHistoryItem.lastPosition > 0
-          ? playableHistoryItem.lastPosition
-          : null;
+      if (restart)
+        playableHistoryItem =
+            playableHistoryItem.copyWith(lastPosition: 0, watchProgress: 0);
+      final startPositionMs = restart
+          ? 0
+          : playableHistoryItem.lastPosition > 0
+              ? playableHistoryItem.lastPosition
+              : null;
 
       if (playableHistoryItem.filePath.startsWith('emby://')) {
         final embyId = embyItemIdFromVideoPath(playableHistoryItem.filePath);
@@ -2025,9 +2168,9 @@ class _MediaServerDetailPageState extends State<MediaServerDetailPage>
         historyItem: historyItem,
         playbackSession: playbackSession,
       );
-      final handled =
-          await PlaybackService().tryPlayExternally(context, playableItem,
-              episodeFileSelectionHandled: true);
+      final handled = await PlaybackService().tryPlayExternally(
+          context, playableItem,
+          episodeFileSelectionHandled: true);
       if (!mounted) return;
       if (handled) {
         onPlaybackStarted?.call();

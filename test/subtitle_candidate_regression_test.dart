@@ -54,25 +54,35 @@ void main() {
     manager.setCurrentVideoPath('${dir.path}/Show.mkv');
     manager.setExternalSubtitle(primary.path);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(delegate.selected.last, primary.path);
+    expect(delegate.selected.last, p.normalize(primary.path));
     await manager.registerExternalSubtitleCandidate(alternate.path);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(delegate.selected.last, primary.path);
-    expect(manager.getAllActiveExternalSubtitlePaths(), [primary.path]);
-    expect(
-        manager.subtitleTrackInfo['external_subtitle']!['path'], primary.path);
+    expect(delegate.selected.last, p.normalize(primary.path));
+    expect(manager.getAllActiveExternalSubtitlePaths(), [
+      p.normalize(primary.path),
+    ]);
+    expect(manager.subtitleTrackInfo['external_subtitle']!['path'],
+        p.normalize(primary.path));
     await manager.addExternalSubtitleToStack(alternate.path);
-    expect(delegate.selected.last, alternate.path);
-    expect(manager.getAllActiveExternalSubtitlePaths(), [alternate.path]);
+    expect(delegate.selected.last, p.normalize(alternate.path));
+    expect(manager.getAllActiveExternalSubtitlePaths(), [
+      p.normalize(alternate.path),
+    ]);
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs
         .getKeys()
         .firstWhere((key) => key.startsWith('external_subtitles_'));
     final entries = json.decode(prefs.getString(raw)!) as List;
-    expect(entries.singleWhere((e) => e['path'] == primary.path)['isActive'],
-        false);
-    expect(entries.singleWhere((e) => e['path'] == alternate.path)['isActive'],
-        true);
+    expect(
+      entries.singleWhere(
+          (e) => e['path'] == p.normalize(primary.path))['isActive'],
+      false,
+    );
+    expect(
+      entries.singleWhere(
+          (e) => e['path'] == p.normalize(alternate.path))['isActive'],
+      true,
+    );
   });
 
   test('restoring episode 1 must not activate episode 2 subtitles', () async {
@@ -88,12 +98,15 @@ void main() {
     await manager.saveVideoSubtitleMapping(video.path, primary.path);
     await manager.autoDetectAndLoadSubtitle(video.path);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect(manager.getAllActiveExternalSubtitlePaths(), [primary.path]);
+    expect(manager.getAllActiveExternalSubtitlePaths(),
+        [p.normalize(primary.path)]);
     final prefs = await SharedPreferences.getInstance();
     final entries = json
         .decode(prefs.getString('external_subtitles_Show.01.mkv-5')!) as List;
-    expect(entries.map((e) => e['path']),
-        containsAll([primary.path, alternate.path]));
+    expect(
+      entries.map((e) => e['path']),
+      containsAll([p.normalize(primary.path), p.normalize(alternate.path)]),
+    );
     expect(entries.length, 2);
   });
 
@@ -138,11 +151,19 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final entries =
         json.decode(prefs.getString('external_subtitles_Show.mkv-5')!) as List;
-    expect(entries.map((s) => s['path']),
-        containsAll([primary.path, alternate.path]));
-    expect(entries.singleWhere((s) => s['path'] == alternate.path)['isActive'],
-        false);
-    expect(manager.getAllActiveExternalSubtitlePaths(), [primary.path]);
+    expect(
+      entries.map((s) => s['path']),
+      containsAll([p.normalize(primary.path), p.normalize(alternate.path)]),
+    );
+    expect(
+      entries.singleWhere(
+        (s) => s['path'] == p.normalize(alternate.path),
+      )['isActive'],
+      false,
+    );
+    expect(manager.getAllActiveExternalSubtitlePaths(), [
+      p.normalize(primary.path),
+    ]);
   });
   test('fresh fuzzy detection excludes other episodes, seasons and series',
       () async {
@@ -163,13 +184,17 @@ void main() {
     final manager = SubtitleManager(player: Player.withDelegate(_Player()));
     manager.setCurrentVideoPath(video.path);
     await manager.autoDetectAndLoadSubtitle(video.path);
-    expect(manager.getAllActiveExternalSubtitlePaths(), [primary.path]);
+    expect(manager.getAllActiveExternalSubtitlePaths(), [
+      p.normalize(primary.path),
+    ]);
     final prefs = await SharedPreferences.getInstance();
     final entries =
         json.decode(prefs.getString('external_subtitles_Show.S01E01.mkv-5')!)
             as List;
-    expect(entries.map((s) => s['path']),
-        unorderedEquals([primary.path, alternate.path]));
+    expect(
+      entries.map((s) => s['path']),
+      unorderedEquals([p.normalize(primary.path), p.normalize(alternate.path)]),
+    );
   });
 
   test('episode change cancels delayed automatic activation', () async {
@@ -199,9 +224,9 @@ void main() {
     await manager.addExternalSubtitleToStack(ass.path);
     await manager.addExternalSubtitleToStack(srt.path);
     await manager.addExternalSubtitleToStack(ssa.path);
-    expect(delegate.selected.last, ssa.path);
+    expect(delegate.selected.last, p.normalize(ssa.path));
     expect(manager.getAllActiveExternalSubtitlePaths(),
-        unorderedEquals([srt.path, ssa.path]));
+        unorderedEquals([p.normalize(srt.path), p.normalize(ssa.path)]));
   });
 
   test(
@@ -214,11 +239,11 @@ void main() {
       ..writeAsStringSync('# VobSub index file, v7\n');
     expect(isVobSubPairComplete(sub.path), true);
     expect(isVobSubPairComplete(idx.path), true);
-    expect(canonicalSubtitlePath(sub.path), idx.path);
+    expect(canonicalSubtitlePath(sub.path), p.normalize(idx.path));
     final text = File('${dir.path}/MicroDVD.sub')
       ..writeAsStringSync('{0}{50}Text');
     expect(isVobSubPairComplete(text.path), true);
-    expect(canonicalSubtitlePath(text.path), text.path);
+    expect(canonicalSubtitlePath(text.path), p.normalize(text.path));
   });
   test('binary SUB mounts the paired IDX directly in the native player',
       () async {
@@ -229,8 +254,9 @@ void main() {
     final delegate = _Player();
     final manager = SubtitleManager(player: Player.withDelegate(delegate));
     await manager.addExternalSubtitleToStack(sub.path);
-    expect(delegate.selected, [idx.path]);
-    expect(manager.getAllActiveExternalSubtitlePaths(), [idx.path]);
+    expect(delegate.selected, [p.normalize(idx.path)]);
+    expect(
+        manager.getAllActiveExternalSubtitlePaths(), [p.normalize(idx.path)]);
   });
 
   test('shared stream auto-loads only server-matched candidates', () async {

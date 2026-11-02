@@ -71,6 +71,14 @@ bool shouldExposeLocalMediaLibrary({
   return !isWeb && !isTelevision;
 }
 
+bool shouldExposeWebDAVMediaLibrary({
+  required bool historyLoaded,
+  required bool hasWatchHistory,
+  required bool hasConfiguredConnection,
+}) {
+  return historyLoaded && (hasWatchHistory || hasConfiguredConnection);
+}
+
 List<UnifiedMediaLibrarySection> buildUnifiedMediaLibrarySections(
   MediaLibraryAvailability availability,
 ) {

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nipaplay/player_abstraction/mdk_player_adapter_io.dart';
 import 'package:nipaplay/player_abstraction/player_abstraction.dart';
 import 'package:nipaplay/utils/subtitle_manager.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 // MDK's stop is asynchronous. Track changes during it can leave its subtitle
@@ -94,7 +95,7 @@ void main() {
     final manager = SubtitleManager(player: Player.withDelegate(native));
     addTearDown(manager.dispose);
     manager.setExternalSubtitle(sup.path);
-    expect(native.calls, contains('media:${sup.path}'));
+    expect(native.calls, contains('media:${p.normalize(sup.path)}'));
     native.calls.clear();
 
     manager.clearExternalSubtitle(notifyListenersToo: false);
@@ -121,7 +122,7 @@ void main() {
     manager.setExternalSubtitle(sup.path);
     manager.setExternalSubtitle(srt.path, preserveStack: true);
     await manager.preloadSubtitleFile(srt.path);
-    expect(manager.currentExternalSubtitlePath, srt.path);
+    expect(manager.currentExternalSubtitlePath, p.normalize(srt.path));
     native.calls.clear();
 
     manager.setExternalSubtitle('');

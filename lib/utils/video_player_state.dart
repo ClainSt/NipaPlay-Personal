@@ -59,6 +59,7 @@ import 'package:nipaplay/services/emby_player_menu_selection.dart';
 import 'package:nipaplay/services/emby_track_application.dart';
 import 'package:nipaplay/services/subtitle_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/services/webdav_proxy_service.dart';
 import 'package:nipaplay/services/jellyfin_playback_sync_service.dart';
 import 'package:nipaplay/services/emby_playback_sync_service.dart';
 import 'package:nipaplay/services/shared_remote_playback_sync_service.dart';
@@ -347,10 +348,12 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
     }
     _notifyListeners();
   }
+
   BuildContext? _context;
   bool _isDisposed = false;
   bool _isBackgroundDanmakuLoading = false;
   int _playbackGeneration = 0;
+
   /// Changes whenever a new playback session starts, including a reload of
   /// the same video path.
   int get playbackGeneration => _playbackGeneration;
@@ -405,6 +408,7 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
     _subtitleEditBoxVisible = visible;
     _notifyListeners();
   }
+
   bool _showControls = true;
   bool _showRightMenu = false; // 控制右侧菜单显示状态
   final String _desktopHoverSettingsMenuEnabledKey =
@@ -486,7 +490,7 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   // 连续采样计数：<3 视为尖刺拒绝追锚，>=3 视为真实跳变接受。
   int _rawSpikeStreak = 0;
 // [MDK-EOF-GUARD] 连续采样确认片尾，防 position 尖刺/无效 duration 误杀播放
-int _exactEndStreak = 0;
+  int _exactEndStreak = 0;
   int _lastElapsedUs = 0; // 最近一次 Ticker elapsed（微秒），供 seek 时使用
   int _lastDiagFrameSkipTimeMs = 0; // [NEXT-DIAG] FRAME SKIP 日志节流：上次输出时间（ms）
   int _lastStallDiagPositionMs = -1; // [停滞诊断] 上次真实位置
@@ -523,15 +527,16 @@ int _exactEndStreak = 0;
   bool _screenshotCropLetterbox = true;
   // 视频画面尺寸模式（适应/填充/拉伸/16:9/4:3），默认适应
   VideoAspectMode _videoAspectMode = VideoAspectMode.contain;
+
   /// 视频画面尺寸模式（适应/填充/拉伸/16:9/4:3）。
   VideoAspectMode get videoAspectMode => _videoAspectMode;
   final String _videoAspectModeKey = 'video_aspect_mode';
   // 软解输出颜色格式（空=内核默认），mdk 走 video.decoder 属性
-    String _softDecodePixelFormat = '';
-    final String _softDecodePixelFormatKey = 'soft_decode_pixel_format';
-    // 硬解模式（mpv hwdec 值，照搬 PiliPlus），默认自动
-    HwDecType _hwdecMode = HwDecType.auto;
-    final String _hwdecModeKey = 'hwdec_mode';
+  String _softDecodePixelFormat = '';
+  final String _softDecodePixelFormatKey = 'soft_decode_pixel_format';
+  // 硬解模式（mpv hwdec 值，照搬 PiliPlus），默认自动
+  HwDecType _hwdecMode = HwDecType.auto;
+  final String _hwdecModeKey = 'hwdec_mode';
   final String _screenshotIncludeDanmakuKey = 'screenshot_include_danmaku';
   final String _screenshotIncludeSubtitlesKey = 'screenshot_include_subtitles';
   final String _screenshotCropLetterboxKey = 'screenshot_crop_letterbox';
@@ -540,12 +545,14 @@ int _exactEndStreak = 0;
   bool get screenshotCaptureIncludesSubtitles =>
       _screenshotCaptureIncludesSubtitles;
   bool get screenshotCropLetterbox => _screenshotCropLetterbox;
+
   /// Window-hosted native video is composited outside Flutter's clip/scale tree.
   bool get supportsVideoAspectModes {
     if (player.usesWindowOverlayVideoSurface) return false;
     if (kIsWeb || !player.prefersPlatformVideoSurface) return true;
     if (defaultTargetPlatform == TargetPlatform.macOS) {
-      return Platform.environment['NIPAPLAY_MACOS_HDR_USE_APPKIT_VIEW'] == '1' ||
+      return Platform.environment['NIPAPLAY_MACOS_HDR_USE_APPKIT_VIEW'] ==
+              '1' ||
           Platform.environment['NIPAPLAY_DISABLE_MACOS_WINDOW_OVERLAY'] == '1';
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
@@ -767,8 +774,8 @@ int _exactEndStreak = 0;
   final String _subtitleFontNameKey = 'subtitle_font_name';
   final String _subtitleFontDirKey = 'subtitle_font_dir';
   final String _subtitleOverrideModeKey = 'subtitle_override_mode';
-    final String _srtSubtitleDelayKey = 'srt_subtitle_delay';
-    double _subtitleScale = defaultSubtitleScale;
+  final String _srtSubtitleDelayKey = 'srt_subtitle_delay';
+  double _subtitleScale = defaultSubtitleScale;
   // 已注册进 Flutter 引擎的字幕字体文件路径（FontLoader 重复加载同一族会抛错）
   static final Set<String> _registeredSubtitleRuntimeFontPaths = <String>{};
   static bool _subtitleFontRegistrationWarned = false;
@@ -786,16 +793,16 @@ int _exactEndStreak = 0;
   bool _subtitleBold = false;
   bool _subtitleItalic = false;
   int _subtitleColorValue = defaultSubtitleColorValue;
-    int _subtitleBorderColorValue = defaultSubtitleBorderColorValue;
-    int _subtitleShadowColorValue = defaultSubtitleShadowColorValue;
-    // 外挂叠层独立颜色（默认白）——长按外挂的调色板设这里，
-    // 不影响字幕设置面板颜色（那只管内嵌轨 sub-color）
-    int _externalSubtitleColorValue = 0xFFFFFFFF;
-      final String _externalSubtitleColorKey = 'external_subtitle_color';
-      // 外挂叠层独立字体（默认空=系统字体）——长按外挂选字体设这里，
-      // 不影响播放器设置（subtitleFontName 只管内嵌 sub-font）
-      String _externalSubtitleFontName = '';
-      final String _externalSubtitleFontNameKey = 'external_subtitle_font_name';
+  int _subtitleBorderColorValue = defaultSubtitleBorderColorValue;
+  int _subtitleShadowColorValue = defaultSubtitleShadowColorValue;
+  // 外挂叠层独立颜色（默认白）——长按外挂的调色板设这里，
+  // 不影响字幕设置面板颜色（那只管内嵌轨 sub-color）
+  int _externalSubtitleColorValue = 0xFFFFFFFF;
+  final String _externalSubtitleColorKey = 'external_subtitle_color';
+  // 外挂叠层独立字体（默认空=系统字体）——长按外挂选字体设这里，
+  // 不影响播放器设置（subtitleFontName 只管内嵌 sub-font）
+  String _externalSubtitleFontName = '';
+  final String _externalSubtitleFontNameKey = 'external_subtitle_font_name';
   String _subtitleFontName = '';
   String _subtitleFontDir = '';
   SubtitleStyleOverrideMode _subtitleOverrideMode = defaultSubtitleOverrideMode;
@@ -804,7 +811,8 @@ int _exactEndStreak = 0;
   // （sub-visibility=no），App 按 sub-text 轮询取文本整块渲染——位置
   // 滑块移动整个字幕块（行距永不收拢）、水平边距按屏幕像素生效。
   bool _embeddedSubtitleOverlayMode = false;
-  final String _embeddedSubtitleOverlayModeKey = 'embedded_subtitle_overlay_mode';
+  final String _embeddedSubtitleOverlayModeKey =
+      'embedded_subtitle_overlay_mode';
   String _embeddedSubtitleOverlayText = '';
   int _lastEmbeddedSubTextPollMs = 0;
 
@@ -1020,7 +1028,9 @@ int _exactEndStreak = 0;
   /// Windows 上的 Media Kit (libmpv) 内核：暂停态对其渲染管线取帧
   /// （snapshot）会冻死 platform 线程，暂停后的截图路径必须跳过。
   bool get _isWindowsMediaKitKernel =>
-      !kIsWeb && Platform.isWindows && player.getPlayerKernelName() == 'Media Kit';
+      !kIsWeb &&
+      Platform.isWindows &&
+      player.getPlayerKernelName() == 'Media Kit';
 
   VideoPlayerState() {
     // 创建临时播放器实例，后续会被 _initialize 中的异步创建替换
@@ -1674,9 +1684,9 @@ int _exactEndStreak = 0;
   bool get subtitleBold => _subtitleBold;
   bool get subtitleItalic => _subtitleItalic;
   Color get subtitleColor => Color(_subtitleColorValue);
-    Color get subtitleBorderColor => Color(_subtitleBorderColorValue);
-    Color get subtitleShadowColor => Color(_subtitleShadowColorValue);
-    Color get externalSubtitleColor => Color(_externalSubtitleColorValue);
+  Color get subtitleBorderColor => Color(_subtitleBorderColorValue);
+  Color get subtitleShadowColor => Color(_subtitleShadowColorValue);
+  Color get externalSubtitleColor => Color(_externalSubtitleColorValue);
   String get externalSubtitleFontName => _externalSubtitleFontName;
   String get subtitleFontName => _subtitleFontName;
   String get subtitleFontDir => _subtitleFontDir;
@@ -1722,6 +1732,7 @@ int _exactEndStreak = 0;
     if (identityPath == null || identityPath.isEmpty) return null;
     return MediaSourceUtils.resolveRemotePathToUrl(identityPath);
   }
+
   PlaybackSession? get currentPlaybackSession => _currentPlaybackSession;
   EmbyResolvedTrackBundle? get currentEmbyTrackSelection =>
       _currentEmbyTrackSelection;

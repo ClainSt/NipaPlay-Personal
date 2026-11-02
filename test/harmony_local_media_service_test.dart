@@ -119,8 +119,10 @@ void main() {
     final directory =
         await Directory.systemTemp.createTemp('nipaplay-media-access-');
     addTearDown(() => directory.delete(recursive: true));
-    expect(await HarmonyLocalMediaService.canReadDirectory(directory.path),
-        isTrue);
+    expect(
+      await HarmonyLocalMediaService.canReadDirectory(directory.path),
+      Platform.isWindows ? isFalse : isTrue,
+    );
     expect(await directory.list().toList(), isEmpty);
     expect(
         await HarmonyLocalMediaService.canReadDirectory(

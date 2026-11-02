@@ -13,6 +13,7 @@ class PlayableItem {
   final PlaybackSession? playbackSession;
   final PlaybackDetailContext? detailContext;
   final String? mediaKey;
+  final int? initialPositionMs;
 
   PlayableItem({
     required this.videoPath,
@@ -25,6 +26,7 @@ class PlayableItem {
     this.playbackSession,
     this.detailContext,
     this.mediaKey,
+    this.initialPositionMs,
   });
 
   factory PlayableItem.fromDetailEpisode(
@@ -41,6 +43,8 @@ class PlayableItem {
       actualPlayUrl: episode.actualPlayUrl,
       playbackSession: episode.playbackSession,
       mediaKey: episode.mediaKey,
+      initialPositionMs:
+          episode.startPositionMs ?? episode.historyItem?.lastPosition,
       detailContext: !detailContext.isIdentified &&
               episode.animeId != null &&
               episode.animeId! > 0
@@ -61,6 +65,7 @@ class PlayableItem {
       playbackSession: playbackSession,
       detailContext: context,
       mediaKey: mediaKey,
+      initialPositionMs: initialPositionMs,
     );
   }
 }

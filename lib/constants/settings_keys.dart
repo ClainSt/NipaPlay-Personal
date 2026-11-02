@@ -64,6 +64,15 @@ class SettingsKeys {
   static const String labsEnableImmersiveAnimeDetail =
       'labs_enable_immersive_anime_detail';
 
+  static const String labsLocalLibraryScrapeMode =
+      'labs_local_library_scrape_mode';
+
+  static const String labsWebDavLibraryScrapeMode =
+      'labs_webdav_library_scrape_mode';
+
+  static const String labsEnableCloudAnimeDetailSections =
+      'labs_enable_cloud_anime_detail_sections';
+
   static const String danmakuEnableNextPlusPlusEngine =
       'labs_enable_next_plus_plus_engine';
 

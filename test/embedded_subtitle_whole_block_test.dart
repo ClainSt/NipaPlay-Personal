@@ -63,8 +63,7 @@ class _FakeMediaKitDelegate extends Fake implements MediaKitPlayerAdapter {
   ValueListenable<bool> get buffering => ValueNotifier<bool>(false);
 }
 
-Future<VideoPlayerState> _buildVideoPlayerState(
-    AbstractPlayer delegate) async {
+Future<VideoPlayerState> _buildVideoPlayerState(AbstractPlayer delegate) async {
   // Construct the state against the inert video_player kernel (no native
   // library loads in the test env); the Media Kit fake delegate is swapped
   // in right after, which is what the assertions below observe.
@@ -208,6 +207,7 @@ void main() {
     // The subtitle menu goes through the stack entry points, which only
     // reach SubtitleManager.
     await videoState.addExternalSubtitleToStack(assPath);
+    await videoState.subtitleManager.preloadSubtitleFile(assPath);
     expect(videoState.isKernelRenderedExternalAssActive, isTrue);
     expect(
       delegate.writtenProperties['sub-visibility'],
@@ -240,8 +240,7 @@ void main() {
 
     // Kana lines are the original (bottom), pure-Han lines the translation
     // (top) — no manual switch needed.
-    expect(videoState.embeddedSubtitleOverlayDisplayText,
-        '中文翻译行\n日本語原文行テスト');
+    expect(videoState.embeddedSubtitleOverlayDisplayText, '中文翻译行\n日本語原文行テスト');
     await tester.pumpWidget(_wrap(
       const SizedBox(
         width: 800,
@@ -257,14 +256,12 @@ void main() {
     // the real clock; tests inject via the debug entry point.)
     videoState.debugSetEmbeddedSubtitleOverlayText('中文翻译行\n日本語原文行テスト');
     await tester.pump();
-    expect(videoState.embeddedSubtitleOverlayDisplayText,
-        '中文翻译行\n日本語原文行テスト');
+    expect(videoState.embeddedSubtitleOverlayDisplayText, '中文翻译行\n日本語原文行テスト');
 
     // All-kana (pure Japanese) block: no evidence to reorder, keep as-is.
     videoState.debugSetEmbeddedSubtitleOverlayText('日本語一行目\n日本語二行目');
     await tester.pump();
-    expect(videoState.embeddedSubtitleOverlayDisplayText,
-        '日本語一行目\n日本語二行目');
+    expect(videoState.embeddedSubtitleOverlayDisplayText, '日本語一行目\n日本語二行目');
   });
 
   testWidgets('bilingual block renders both lines at slider 0 and 100',
@@ -297,10 +294,12 @@ void main() {
     expect(find.textContaining('中文翻译行'), findsNWidgets(2)); // stroke + fill
     expect(find.textContaining('日本語原文行'), findsNWidgets(2));
     final alignAtTop = tester.widget<Align>(
-      find.ancestor(
-        of: find.textContaining('中文翻译行'),
-        matching: find.byType(Align),
-      ).first,
+      find
+          .ancestor(
+            of: find.textContaining('中文翻译行'),
+            matching: find.byType(Align),
+          )
+          .first,
     );
     expect((alignAtTop.alignment as Alignment).y, -1);
 
@@ -310,10 +309,12 @@ void main() {
     expect(find.textContaining('中文翻译行'), findsNWidgets(2));
     expect(find.textContaining('日本語原文行'), findsNWidgets(2));
     final alignAtBottom = tester.widget<Align>(
-      find.ancestor(
-        of: find.textContaining('中文翻译行'),
-        matching: find.byType(Align),
-      ).first,
+      find
+          .ancestor(
+            of: find.textContaining('中文翻译行'),
+            matching: find.byType(Align),
+          )
+          .first,
     );
     expect((alignAtBottom.alignment as Alignment).y, 1);
   });

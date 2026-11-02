@@ -36,8 +36,7 @@ class WebDavChallengeAuth {
   // 允许的 401 重试次数：一次 Basic→Digest 切换 + 一次 stale nonce 刷新。
   int _retryBudget = 2;
 
-  bool get hasCredentials =>
-      username.trim().isNotEmpty || password.isNotEmpty;
+  bool get hasCredentials => username.trim().isNotEmpty || password.isNotEmpty;
 
   /// 当前应发送的 Authorization 头；连接未配置凭证时返回 null。
   String? authorizationHeader(String method, String requestTarget) {
@@ -63,7 +62,9 @@ class WebDavChallengeAuth {
         .map((value) => value.trim().toLowerCase())
         .where((value) => value.isNotEmpty)
         .toList();
-    final qop = qopOptions.contains('auth') ? 'auth' : null;
+    final qop = qopOptions.contains('auth')
+        ? 'auth'
+        : (qopOptions.contains('auth-int') ? 'auth-int' : null);
 
     final cnonce = _cnonceGenerator();
     final nc = (++_nonceCount).toRadixString(16).padLeft(8, '0');
@@ -71,7 +72,11 @@ class WebDavChallengeAuth {
     if (algorithm.toUpperCase() == 'MD5-SESS') {
       ha1 = _md5Hex('$ha1:$nonce:$cnonce');
     }
-    final ha2 = _md5Hex('$method:$requestTarget');
+    // GET and HEAD have an empty entity body. RFC 7616 auth-int still includes
+    // the digest of that empty body in HA2.
+    final ha2 = qop == 'auth-int'
+        ? _md5Hex('$method:$requestTarget:${_md5Hex('')}')
+        : _md5Hex('$method:$requestTarget');
     final response = qop == null
         ? _md5Hex('$ha1:$nonce:$ha2')
         : _md5Hex('$ha1:$nonce:$nc:$cnonce:$qop:$ha2');
@@ -171,7 +176,8 @@ Future<Response<List<int>>> webDavAuthenticatedGet(
     final status = response.statusCode ?? 0;
     if (status == 401 &&
         sameOrigin &&
-        auth.tryHandleUnauthorized(response.headers.value('www-authenticate'))) {
+        auth.tryHandleUnauthorized(
+            response.headers.value('www-authenticate'))) {
       continue;
     }
     final location = response.headers.value('location');

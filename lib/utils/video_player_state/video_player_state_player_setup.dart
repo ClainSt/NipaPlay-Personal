@@ -25,6 +25,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
     EmbyResolvedTrackBundle? embyTrackSelection,
     PlaybackDetailContext? playbackDetailContext,
     String? mediaKey,
+    int? initialPositionMs,
     bool resetManualDanmakuOffset = true,
     bool preserveEmbyAccountKey = false,
     bool manualMatchHandled = false,
@@ -50,10 +51,12 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
           playbackSession: playbackSession,
           detailContext: playbackDetailContext,
           mediaKey: mediaKey,
+          initialPositionMs: initialPositionMs,
         ),
         isCancelled: resolutionCancelled,
       );
       if (selected == null || resolutionCancelled()) return;
+      final requestedPathBeforeSelection = videoPath;
       if (!MediaIdentityResolver.samePath(videoPath, selected.videoPath)) {
         // A session/track bundle belongs to the originally requested file.
         embyTrackSelection = null;
@@ -65,7 +68,12 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
       actualPlayUrl = selected.actualPlayUrl;
       playbackSession = selected.playbackSession;
       playbackDetailContext = selected.detailContext;
-      mediaKey = selected.mediaKey;
+      mediaKey = selected.mediaKey ??
+          (MediaIdentityResolver.samePath(
+                  requestedPathBeforeSelection, selected.videoPath)
+              ? mediaKey
+              : null);
+      initialPositionMs = selected.initialPositionMs ?? initialPositionMs;
     }
     if (actualPlayUrl == null &&
         resolutionContext != null &&
@@ -148,7 +156,9 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
     _statusMessages.clear(); // <--- 新增行：确保消息列表在开始时是空的
     _isStartupMessageFlowActive = true;
     _initialHistoryItem = historyItem;
-    _currentMediaKey = mediaKey ?? MediaIdentityResolver.forPath(videoPath);
+    _currentMediaKey = mediaKey ??
+        historyItem?.mediaKey ??
+        MediaIdentityResolver.forPath(videoPath);
 
     // 从 historyItem 中获取弹幕 ID
     if (historyItem != null) {
@@ -361,13 +371,11 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
               await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
                   videoPath);
           // 解析失败（连接不存在等）时保留传入直链，维持旧行为。
-          resolvedActualPlayUrl =
-              (proxyUrl != null && proxyUrl.isNotEmpty)
-                  ? proxyUrl
-                  : resolvedActualPlayUrl;
+          resolvedActualPlayUrl = (proxyUrl != null && proxyUrl.isNotEmpty)
+              ? proxyUrl
+              : resolvedActualPlayUrl;
         } else if (MediaSourceUtils.isNewSmbPath(videoPath) &&
-            (resolvedActualPlayUrl == null ||
-                resolvedActualPlayUrl.isEmpty)) {
+            (resolvedActualPlayUrl == null || resolvedActualPlayUrl.isEmpty)) {
           resolvedActualPlayUrl =
               MediaSourceUtils.resolveSmbPathToUrl(videoPath);
         }
@@ -556,7 +564,8 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
       // 准备播放器
       mediaPrepareStarted = true;
       await player.prepare();
-      debugPrint('[PlayerSetup] prepare 完成 kernel=${player.getPlayerKernelName()} '
+      debugPrint(
+          '[PlayerSetup] prepare 完成 kernel=${player.getPlayerKernelName()} '
           'state=${player.state}');
       // 内核 setMedia+prepare 后通常自动进入播放（mdk/media_kit 默认）。
       debugPrint('[PlayerSetup] 媒体已 prepare，内核自动进入播放');
@@ -849,7 +858,11 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
       }
 
       // 获取上次播放位置
-      final lastPosition = await _getVideoPosition(videoPath);
+      final storedPosition = await _getVideoPosition(videoPath);
+      final lastPosition = initialPositionMs ??
+          (storedPosition > 0
+              ? storedPosition
+              : (_initialHistoryItem?.lastPosition ?? 0));
       debugPrint(
         'VideoPlayerState: lastPosition for $videoPath = $lastPosition (raw value from _getVideoPosition)',
       );
@@ -1318,11 +1331,14 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
         }
       }
       if (mediaPrepareStarted && !mediaPrepareCompleted) {
-        final detail = preferredPlaybackErrorDetail(
-          specificError: player.mediaInfo.specificErrorMessage,
-          mediaLoadError: player.mediaLoadError,
-          fallback: e,
-        );
+        final authFailure = WebDAVProxyService.instance
+            .authFailureMessageForMediaPath(videoPath);
+        final detail = authFailure ??
+            preferredPlaybackErrorDetail(
+              specificError: player.mediaInfo.specificErrorMessage,
+              mediaLoadError: player.mediaLoadError,
+              fallback: e,
+            );
         final message = '播放器打开媒体失败: $detail';
         debugPrint(
           '[VideoPlayerState] Media prepare failed for $videoPath: $detail',
@@ -1464,6 +1480,10 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
 
       WatchHistoryItem? existingHistory =
           await WatchHistoryManager.getHistoryItem(path);
+      if (existingHistory == null && _currentMediaKey != null) {
+        existingHistory =
+            await WatchHistoryManager.getHistoryByMediaKey(_currentMediaKey!);
+      }
 
       if (existingHistory == null && sharedEpisodeHistories.isNotEmpty) {
         try {
@@ -1549,6 +1569,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
           thumbnailPath: existingHistory.thumbnailPath ??
               _initialHistoryItem?.thumbnailPath,
           isFromScan: existingHistory.isFromScan,
+          mediaKey: _currentMediaKey ?? _initialHistoryItem?.mediaKey,
         );
 
         if (isJellyfinStream) {
@@ -1674,6 +1695,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
         lastWatchTime: DateTime.now(),
         thumbnailPath: _initialHistoryItem?.thumbnailPath,
         isFromScan: _initialHistoryItem?.isFromScan ?? false,
+        mediaKey: _currentMediaKey ?? _initialHistoryItem?.mediaKey,
       );
 
       final bool isJellyfinStream = path.startsWith('jellyfin://');

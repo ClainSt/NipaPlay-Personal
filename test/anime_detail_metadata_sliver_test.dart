@@ -46,6 +46,7 @@ void main() {
           home: Scaffold(
               body: AnimeDetailPage(
             animeId: 0,
+            useImmersiveLayout: false,
             renderInWindowScaffold: false,
             sharedSummary: SharedRemoteAnimeSummary(
               animeId: 0,
@@ -61,20 +62,28 @@ void main() {
         ),
       ),
     ));
-    await tester.pumpAndSettle();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     expect(find.byType(AnimeDetailMetadataSliver), findsOneWidget);
     expect(find.text('Last title'), findsNothing);
     expect(find.byType(BangumiCommentsWidget), findsNothing);
     await tester.tap(find.text('评论'));
-    await tester.pumpAndSettle();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     final comments = tester.state(find.byType(BangumiCommentsWidget));
     await tester.tap(find.text('详情'));
-    await tester.pumpAndSettle();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     expect(
         tester.state(find.byType(BangumiCommentsWidget, skipOffstage: false)),
         same(comments));
     await tester.tap(find.text('评论'));
-    await tester.pumpAndSettle();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     expect(tester.state(find.byType(BangumiCommentsWidget)), same(comments));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());

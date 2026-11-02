@@ -10,7 +10,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/utils/webdav_http_auth.dart';
 
-/// WebDAV 本地认证代理。
+/// WebDAV 本地流代理。
 ///
 /// MDK/Media Kit 等播放内核只能拿到一个裸 HTTP URL，无法在 401 挑战时完成
 /// Digest 协商（MDK 的 `avio.headers` 是静态头，写死后不会随挑战刷新）。
@@ -29,6 +29,7 @@ class WebDAVProxyService {
   HttpServer? _server;
   int _port = 0;
   bool _isRunning = false;
+  _WebDavAuthFailure? _lastAuthFailure;
 
   bool get isRunning => _isRunning;
   int get port => _port;
@@ -149,7 +150,9 @@ class WebDAVProxyService {
     required bool headOnly,
   }) async {
     final connReference = request.url.queryParameters['conn']?.trim();
-    final rawPath = request.url.queryParameters['path']?.trim();
+    // File names may legitimately start or end with spaces. Query decoding has
+    // already restored the original path, so do not trim it here.
+    final rawPath = request.url.queryParameters['path'];
     if (connReference == null ||
         connReference.isEmpty ||
         rawPath == null ||
@@ -210,13 +213,26 @@ class WebDAVProxyService {
         final resp = await req.close().timeout(const Duration(seconds: 30));
 
         if (resp.statusCode == HttpStatus.unauthorized) {
+          final challenge =
+              resp.headers.value(HttpHeaders.wwwAuthenticateHeader);
           await _drainAndAbort(resp, req);
           if (sameOrigin &&
               auth.tryHandleUnauthorized(
-                resp.headers.value(HttpHeaders.wwwAuthenticateHeader),
+                challenge,
               )) {
             continue; // 按新认证方案重发同一请求
           }
+          _lastAuthFailure = _WebDavAuthFailure(
+            connectionId: connection.id,
+            relativePath: rawPath,
+            credentialsConfigured: auth.hasCredentials,
+            requiresBasic: challenge?.toLowerCase().contains('basic') == true,
+          );
+          debugPrint(
+            'WebDAV proxy: HTTP 401 from ${currentUri.replace(userInfo: '')}; '
+            'credentialsConfigured=${auth.hasCredentials}, '
+            'challenge=${_summarizeChallenge(challenge)}',
+          );
           return Response(
             HttpStatus.unauthorized,
             body: 'WebDAV server rejected credentials',
@@ -237,6 +253,9 @@ class WebDAVProxyService {
 
         if (resp.statusCode >= HttpStatus.badRequest) {
           final status = resp.statusCode;
+          debugPrint(
+            'WebDAV proxy: upstream returned HTTP $status for ${currentUri.replace(userInfo: '')}',
+          );
           await _drainAndAbort(resp, req);
           return Response(status, body: 'WebDAV upstream error (HTTP $status)');
         }
@@ -281,11 +300,17 @@ class WebDAVProxyService {
         headers: passthroughHeaders,
       );
     } on TimeoutException {
+      debugPrint(
+        'WebDAV proxy: upstream request timed out for ${directUri.replace(userInfo: '')}',
+      );
       return Response(
         HttpStatus.gatewayTimeout,
         body: 'WebDAV upstream timeout',
       );
     } catch (e) {
+      debugPrint(
+        'WebDAV proxy: request failed for ${directUri.replace(userInfo: '')}: $e',
+      );
       return Response.internalServerError(body: 'WebDAV stream error: $e');
     } finally {
       if (!handedToStream) {
@@ -296,10 +321,54 @@ class WebDAVProxyService {
     }
   }
 
+  /// Returns a user-facing explanation when the current WebDAV media path was
+  /// rejected by the upstream server for missing or invalid authentication.
+  String? authFailureMessageForMediaPath(String mediaPath) {
+    final failure = _lastAuthFailure;
+    if (failure == null) return null;
+    final resolved = WebDAVService.instance.resolveMediaPath(mediaPath);
+    if (resolved == null ||
+        resolved.connection.id != failure.connectionId ||
+        resolved.relativePath != failure.relativePath) {
+      return null;
+    }
+    if (!failure.credentialsConfigured && failure.requiresBasic) {
+      return 'WebDAV 服务器要求 Basic 认证，但当前连接没有填写用户名和密码。请在“WebDAV库管理”中编辑该连接，填写账号后重试。';
+    }
+    if (!failure.credentialsConfigured) {
+      return 'WebDAV 服务器要求身份认证，但当前连接没有配置用户名和密码。请编辑 WebDAV 连接并填写账号后重试。';
+    }
+    return 'WebDAV 服务器拒绝了当前账号。请检查 WebDAV 连接中的用户名、密码及该目录的读取权限。';
+  }
+
   static bool _isSameOrigin(Uri a, Uri b) =>
       a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
       a.host.toLowerCase() == b.host.toLowerCase() &&
       a.port == b.port;
+
+  static String _summarizeChallenge(String? challenge) {
+    if (challenge == null || challenge.trim().isEmpty) return 'missing';
+    final lower = challenge.toLowerCase();
+    final schemes = <String>[
+      if (lower.contains('digest')) 'Digest',
+      if (lower.contains('basic')) 'Basic',
+      if (lower.contains('bearer')) 'Bearer',
+    ];
+    final qop = RegExp(r'qop\s*=\s*"?([^",]+)', caseSensitive: false)
+        .firstMatch(challenge)
+        ?.group(1)
+        ?.trim();
+    final algorithm =
+        RegExp(r'algorithm\s*=\s*"?([^",]+)', caseSensitive: false)
+            .firstMatch(challenge)
+            ?.group(1)
+            ?.trim();
+    return [
+      if (schemes.isNotEmpty) schemes.join('+') else 'unknown',
+      if (qop != null) 'qop=$qop',
+      if (algorithm != null) 'algorithm=$algorithm',
+    ].join(', ');
+  }
 
   /// 把上游响应流包装为在完成/出错时关闭 [client] 的流，
   /// 保证播放器 seek 断开连接后 HttpClient 资源被回收。
@@ -329,4 +398,18 @@ class WebDAVProxyService {
       request?.abort();
     } catch (_) {}
   }
+}
+
+class _WebDavAuthFailure {
+  const _WebDavAuthFailure({
+    required this.connectionId,
+    required this.relativePath,
+    required this.credentialsConfigured,
+    required this.requiresBasic,
+  });
+
+  final String connectionId;
+  final String relativePath;
+  final bool credentialsConfigured;
+  final bool requiresBasic;
 }

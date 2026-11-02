@@ -6,12 +6,14 @@ import FlutterMacOS
 import Foundation
 
 import adaptive_platform_ui
+import audioplayers_darwin
 import battery_plus
 import desktop_drop
 import dynamic_color
 import erika_flutter
 import file_selector_macos
 import flutter_js
+import flutter_secure_storage_darwin
 import fvp
 import hotkey_manager_macos
 import media_kit_libs_macos_video
@@ -25,20 +27,24 @@ import screen_retriever_macos
 import shared_preferences_foundation
 import sqflite_darwin
 import tray_manager
+import universal_gamepad
 import url_launcher_macos
 import video_player_avfoundation
 import volume_controller
 import wakelock_plus
+import webview_flutter_wkwebview
 import window_manager
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AdaptivePlatformUiPlugin.register(with: registry.registrar(forPlugin: "AdaptivePlatformUiPlugin"))
+  AudioplayersDarwinPlugin.register(with: registry.registrar(forPlugin: "AudioplayersDarwinPlugin"))
   BatteryPlusMacosPlugin.register(with: registry.registrar(forPlugin: "BatteryPlusMacosPlugin"))
   DesktopDropPlugin.register(with: registry.registrar(forPlugin: "DesktopDropPlugin"))
   DynamicColorPlugin.register(with: registry.registrar(forPlugin: "DynamicColorPlugin"))
   ErikaFlutterPlugin.register(with: registry.registrar(forPlugin: "ErikaFlutterPlugin"))
   FileSelectorPlugin.register(with: registry.registrar(forPlugin: "FileSelectorPlugin"))
   FlutterJsPlugin.register(with: registry.registrar(forPlugin: "FlutterJsPlugin"))
+  FlutterSecureStorageDarwinPlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStorageDarwinPlugin"))
   FvpPlugin.register(with: registry.registrar(forPlugin: "FvpPlugin"))
   HotkeyManagerMacosPlugin.register(with: registry.registrar(forPlugin: "HotkeyManagerMacosPlugin"))
   MediaKitLibsMacosVideoPlugin.register(with: registry.registrar(forPlugin: "MediaKitLibsMacosVideoPlugin"))
@@ -52,9 +58,11 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   SharedPreferencesPlugin.register(with: registry.registrar(forPlugin: "SharedPreferencesPlugin"))
   SqflitePlugin.register(with: registry.registrar(forPlugin: "SqflitePlugin"))
   TrayManagerPlugin.register(with: registry.registrar(forPlugin: "TrayManagerPlugin"))
+  GamepadPlugin.register(with: registry.registrar(forPlugin: "GamepadPlugin"))
   UrlLauncherPlugin.register(with: registry.registrar(forPlugin: "UrlLauncherPlugin"))
   FVPVideoPlayerPlugin.register(with: registry.registrar(forPlugin: "FVPVideoPlayerPlugin"))
   VolumeControllerPlugin.register(with: registry.registrar(forPlugin: "VolumeControllerPlugin"))
   WakelockPlusMacosPlugin.register(with: registry.registrar(forPlugin: "WakelockPlusMacosPlugin"))
+  WebViewFlutterPlugin.register(with: registry.registrar(forPlugin: "WebViewFlutterPlugin"))
   WindowManagerPlugin.register(with: registry.registrar(forPlugin: "WindowManagerPlugin"))
 }

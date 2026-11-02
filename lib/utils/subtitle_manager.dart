@@ -38,6 +38,7 @@ class SubtitleManager extends ChangeNotifier {
   String? _currentExternalSubtitlePath;
   final Map<String, Map<String, dynamic>> _subtitleTrackInfo = {};
   final Map<String, List<dynamic>> _subtitleCache = {};
+  final Map<String, Future<void>> _subtitlePreloadTasks = {};
   final Expando<SubtitleTimelineIndex> _subtitleIndexes = Expando();
 
   /// 缓存指纹：path -> "size:mtime"，用于检测字幕文件内容变化
@@ -279,7 +280,7 @@ class SubtitleManager extends ChangeNotifier {
 
   // 获取已缓存的字幕内容
   List<dynamic>? getCachedSubtitle(String path) {
-    return _subtitleCache[path];
+    return _subtitleCache[canonicalSubtitlePath(path)];
   }
 
   // 保存视频与字幕路径的映射
@@ -368,7 +369,22 @@ class SubtitleManager extends ChangeNotifier {
   }
 
   // 异步预加载字幕文件
-  Future<void> preloadSubtitleFile(String path) async {
+  Future<void> preloadSubtitleFile(String path) {
+    path = canonicalSubtitlePath(path);
+    final pending = _subtitlePreloadTasks[path];
+    if (pending != null) return pending;
+
+    late final Future<void> task;
+    task = _preloadSubtitleFile(path).whenComplete(() {
+      if (identical(_subtitlePreloadTasks[path], task)) {
+        _subtitlePreloadTasks.remove(path);
+      }
+    });
+    _subtitlePreloadTasks[path] = task;
+    return task;
+  }
+
+  Future<void> _preloadSubtitleFile(String path) async {
     try {
       final file = File(path);
       if (!await file.exists()) return;
@@ -444,7 +460,8 @@ class SubtitleManager extends ChangeNotifier {
 
   // 设置当前外部字幕路径
   void setCurrentExternalSubtitlePath(String? path) {
-    _currentExternalSubtitlePath = path;
+    _currentExternalSubtitlePath =
+        path == null || path.isEmpty ? path : canonicalSubtitlePath(path);
     debugPrint('SubtitleManager: 设置当前外部字幕路径: $path');
   }
 
@@ -456,6 +473,15 @@ class SubtitleManager extends ChangeNotifier {
       return '$name-$size';
     }
     return sha1.convert(utf8.encode(videoPath)).toString();
+  }
+
+  String _subtitlePathIdentity(String value) {
+    final isWindowsDrivePath = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value);
+    if (!isWindowsDrivePath && (Uri.tryParse(value)?.hasScheme ?? false)) {
+      return value;
+    }
+    final normalized = p.normalize(value);
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 
   Future<void> _subtitlePersistence = Future<void>.value();
@@ -514,8 +540,12 @@ class SubtitleManager extends ChangeNotifier {
         }
       }
 
-      final existingIndex =
-          subtitles.indexWhere((s) => s['path'] == subtitlePath);
+      final subtitleIdentity = _subtitlePathIdentity(subtitlePath);
+      final existingIndex = subtitles.indexWhere(
+        (s) =>
+            _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+            subtitleIdentity,
+      );
       final existing = existingIndex < 0
           ? <String, dynamic>{}
           : subtitles.removeAt(existingIndex);
@@ -553,14 +583,19 @@ class SubtitleManager extends ChangeNotifier {
         subtitles.insert(existingIndex, entry);
       }
       if (!registerOnly) {
+        final activeIdentities = activePaths.map(_subtitlePathIdentity).toSet();
         for (final item in subtitles) {
-          item['isActive'] = activePaths.contains(item['path']);
+          item['isActive'] = activeIdentities.contains(
+            _subtitlePathIdentity(item['path']?.toString() ?? ''),
+          );
         }
       }
       await prefs.setString(subtitlesKey, json.encode(subtitles));
       final lastActiveKey = 'last_active_subtitle_$videoHashKey';
-      var activeIndex = subtitles
-          .indexWhere((s) => s['path'] == primaryPath && s['isActive'] == true);
+      var activeIndex = subtitles.indexWhere((s) =>
+          _subtitlePathIdentity(s['path']?.toString() ?? '') ==
+              _subtitlePathIdentity(primaryPath ?? '') &&
+          s['isActive'] == true);
       if (activeIndex < 0)
         activeIndex = subtitles.indexWhere((s) => s['isActive'] == true);
       if (activeIndex >= 0) {
@@ -590,7 +625,9 @@ class SubtitleManager extends ChangeNotifier {
         final decoded = json.decode(raw);
         if (decoded is List) {
           for (final item in decoded) {
-            if (item is Map && item['path'] == subtitlePath) {
+            if (item is Map &&
+                _subtitlePathIdentity(item['path']?.toString() ?? '') ==
+                    _subtitlePathIdentity(subtitlePath)) {
               final name = item['name']?.toString();
               if (name != null && name.isNotEmpty) return name;
             }
@@ -622,8 +659,7 @@ class SubtitleManager extends ChangeNotifier {
     // still be stopping: changing its subtitle tracks then can strand the
     // decoder and make fvp's next prepare wait for Stopped forever.
     final currentPath = _currentExternalSubtitlePath;
-    final hasNativeExternalSubtitle =
-        (currentPath != null &&
+    final hasNativeExternalSubtitle = (currentPath != null &&
             !_shouldRenderExternalSubtitleInApp(currentPath)) ||
         _activeExternalSubtitlePaths
             .any((path) => !_shouldRenderExternalSubtitleInApp(path));
@@ -995,8 +1031,8 @@ class SubtitleManager extends ChangeNotifier {
     // 会同时出画面，所以挂载时先关掉内核的内嵌轨。叠加挂载时若内核正在渲染外挂
     // ASS/SSA（占 sid），则保持不动。
     final kernelExternalActive = keepKernelExternal &&
-        _activeExternalSubtitlePaths.any(
-            (other) => other != path && !_shouldRenderExternalSubtitleInApp(other));
+        _activeExternalSubtitlePaths.any((other) =>
+            other != path && !_shouldRenderExternalSubtitleInApp(other));
     if (!kernelExternalActive) {
       try {
         if (_player.activeSubtitleTracks.isNotEmpty) {
@@ -1078,6 +1114,7 @@ class SubtitleManager extends ChangeNotifier {
   }
 
   String _textAtPath(String path, int positionMs) {
+    path = canonicalSubtitlePath(path);
     if (!_shouldRenderExternalSubtitleInApp(path)) return '';
 
     final cachedEntries = _subtitleCache[path];

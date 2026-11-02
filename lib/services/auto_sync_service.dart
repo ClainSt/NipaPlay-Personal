@@ -22,6 +22,7 @@ import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/services/dandanplay_remote_service.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/utils/auto_sync_settings.dart';
 
 enum AutoSyncPhase { idle, pulling, merging, pushing, complete, failed }
@@ -139,6 +140,19 @@ class AutoSyncService extends ChangeNotifier {
 
   Future<void> scheduleSyncAfterLocalChange() async {
     if (!await _shouldSyncOnRecordChange()) return;
+    _localChangeTimer?.cancel();
+    _localChangeTimer = Timer(_localChangeDebounce, () {
+      _localChangeTimer = null;
+      unawaited(_ignoreResult(_performSync()));
+    });
+  }
+
+  Future<void> scheduleSyncAfterCatalogChange() async {
+    if (!await AutoSyncSettings.isEnabled() ||
+        !(await AutoSyncSettings.getCategories())
+            .contains(BackupCategory.mediaLibraries)) {
+      return;
+    }
     _localChangeTimer?.cancel();
     _localChangeTimer = Timer(_localChangeDebounce, () {
       _localChangeTimer = null;
@@ -280,7 +294,6 @@ class AutoSyncService extends ChangeNotifier {
         await AnimeDeletionTombstones.activeTombstones();
     final localBackup = IncrementalSyncDataFilter.sanitizeBackup(
       collectedLocalBackup,
-      webDavConnectionTombstones: WebDAVService.instance.connectionTombstones,
       animeDeletionTombstones: animeDeletionTombstones,
     );
     final localState =
@@ -808,15 +821,34 @@ class AutoSyncService extends ChangeNotifier {
       modifiedAt: now,
       deviceId: 'local',
     );
-    final remoteKeys = {
+    final remoteOperationsByIdentity = {
       for (final operation in remoteChanges)
-        '${operation.category}\u0000${operation.key}',
+        '${operation.category}\u0000${operation.key}': operation,
     };
     final acceptedLocalChanges = <IncrementalSyncOperation>[];
     for (final operation in localChanges) {
       final identity = '${operation.category}\u0000${operation.key}';
-      if (!remoteKeys.contains(identity)) {
+      final remoteOperation = remoteOperationsByIdentity[identity];
+      if (remoteOperation == null) {
         acceptedLocalChanges.add(operation);
+        continue;
+      }
+      if (_isManualCloudAssetRelation(remoteOperation) &&
+          !_isManualCloudAssetRelation(operation)) {
+        // A locked manual classification from another device must survive a
+        // stale automatic rescan on this device. The separate relation-history
+        // entities remain in the merged state for undo and conflict review.
+        continue;
+      }
+      if (_isManualCloudAssetRelation(remoteOperation) &&
+          _isManualCloudAssetRelation(operation) &&
+          !_localCloudAssetRelationWins(
+            key: operation.key,
+            localValue: operation.value,
+            remoteValue: remoteOperation.value,
+            local: local,
+            remote: remote,
+          )) {
         continue;
       }
       if (operation.category == BackupCategory.watchHistory.name &&
@@ -834,6 +866,76 @@ class AutoSyncService extends ChangeNotifier {
       }
     }
     return IncrementalSyncCodec.applyOperations(remote, acceptedLocalChanges);
+  }
+
+  bool _isManualCloudAssetRelation(IncrementalSyncOperation operation) =>
+      operation.category == BackupCategory.mediaLibraries.name &&
+      operation.key.startsWith('cloudMediaIndex:asset:') &&
+      !operation.deleted &&
+      operation.value is Map &&
+      operation.value['relation_locked'] == 1;
+
+  bool _localCloudAssetRelationWins({
+    required String key,
+    required dynamic localValue,
+    required dynamic remoteValue,
+    required IncrementalSyncState local,
+    required IncrementalSyncState remote,
+  }) {
+    final encodedIdentity = key.substring('cloudMediaIndex:asset:'.length);
+    final identity = utf8.decode(
+      base64Url.decode(base64Url.normalize(encodedIdentity)),
+    );
+    final parts = identity.split('\n');
+    if (parts.length == 2) {
+      final changesById = <String, Map>{};
+      for (final state in [remote, local]) {
+        final records = state[BackupCategory.mediaLibraries.name] ?? const {};
+        for (final entry in records.entries.where(
+          (entry) => entry.key.startsWith('cloudMediaIndex:relation:'),
+        )) {
+          final value = entry.value;
+          if (value is Map &&
+              value['source_id']?.toString() == parts[0] &&
+              value['relative_path']?.toString() == parts[1]) {
+            changesById[entry.key] = value;
+          }
+        }
+      }
+      final relevantChanges = changesById.values.where((change) {
+        final undone = change['undone'];
+        return change['undone'] != true && undone != 1;
+      }).toList()
+        ..sort((a, b) {
+          final timeOrder = (a['created_at']?.toString() ?? '')
+              .compareTo(b['created_at']?.toString() ?? '');
+          if (timeOrder != 0) return timeOrder;
+          return (a['id']?.toString() ?? '')
+              .compareTo(b['id']?.toString() ?? '');
+        });
+      if (relevantChanges.isNotEmpty) {
+        final latest = relevantChanges.last;
+        final localMatches = _cloudRelationMatches(localValue, latest);
+        final remoteMatches = _cloudRelationMatches(remoteValue, latest);
+        if (localMatches != remoteMatches) return localMatches;
+      }
+    }
+
+    // Older records may have no relation history. Use a stable tie-break so
+    // two devices converge on the same locked relation instead of bouncing it.
+    final localSignature = _cloudRelationSignature(localValue);
+    final remoteSignature = _cloudRelationSignature(remoteValue);
+    return localSignature.compareTo(remoteSignature) <= 0;
+  }
+
+  bool _cloudRelationMatches(dynamic asset, Map change) =>
+      asset is Map &&
+      asset['work_key']?.toString() == change['after_work_key']?.toString() &&
+      asset['category']?.toString() == change['after_category']?.toString();
+
+  String _cloudRelationSignature(dynamic asset) {
+    if (asset is! Map) return '';
+    return '${asset['work_key'] ?? ''}\u0000${asset['category'] ?? ''}';
   }
 
   bool _localWatchRecordIsNewer(dynamic local, dynamic remote) {
@@ -854,6 +956,15 @@ class AutoSyncService extends ChangeNotifier {
     if (operations.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     final database = WatchHistoryDatabase.instance;
+    for (final operation in operations.where((operation) =>
+        operation.category == BackupCategory.mediaLibraries.name &&
+        operation.key.startsWith('cloudMediaIndex:'))) {
+      final rawValue = operation.deleted ? null : operation.value;
+      await CloudMediaIndexDatabase.instance.applySyncRecord(
+        key: operation.key.substring('cloudMediaIndex:'.length),
+        value: rawValue is Map ? Map<String, Object?>.from(rawValue) : null,
+      );
+    }
     for (final operation
         in operations.where((operation) => operation.deleted)) {
       if (operation.category == BackupCategory.preferences.name) {
@@ -993,7 +1104,9 @@ class AutoSyncService extends ChangeNotifier {
               IncrementalSyncWebDavConnections.isTombstone(operation.value)) &&
           // 番剧删除墓碑不是观看记录，不能经 restoreFromData 恢复。
           !(operation.category == BackupCategory.watchHistory.name &&
-              AnimeDeletionTombstones.isDeletionKey(operation.key)),
+              AnimeDeletionTombstones.isDeletionKey(operation.key)) &&
+          !(operation.category == BackupCategory.mediaLibraries.name &&
+              operation.key.startsWith('cloudMediaIndex:')),
     )) {
       changedState.putIfAbsent(operation.category, () => {})[operation.key] =
           operation.value;

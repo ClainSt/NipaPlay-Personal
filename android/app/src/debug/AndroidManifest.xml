@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
-        android:label="NipaPlay 调试版"
+        android:label="NipaPlay Personal 调试版"
         tools:replace="android:label" />
     <!-- The INTERNET permission is required for development. Specifically,
          the Flutter tool needs it to communicate with the running application

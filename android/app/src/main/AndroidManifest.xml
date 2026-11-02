@@ -20,7 +20,7 @@
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
     <application
-        android:label="NipaPlay"
+        android:label="NipaPlay Personal"
         android:name="androidx.multidex.MultiDexApplication"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config"

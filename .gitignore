@@ -5,6 +5,7 @@
 .dart-tool/
 .packages
 build/
+/release/
 .flatpak-builder/
 # Generated locally from a platform dependency profile (HarmonyOS or Linux).
 /pubspec_overrides.yaml
@@ -52,6 +53,13 @@ docs/error.txt
 /packages/nipaplay_smb2/android/.cxx
 /packages/nipaplay_smb2/android/.cxx
 /packages/nipaplay_smb2/android/.cxx/Debug/6r64695b
+/android/.kotlin/
+/third_party/fvp/android/.cxx/
+/third_party/fvp/android/mdk-sdk/
+/third_party/fvp/android/mdk-sdk-android.7z
+/third_party/fvp/windows/mdk-sdk/
+/third_party/fvp/windows/mdk-sdk-windows-desktop-vs2022-x64.7z
+/.personal-signing/
 /rust/target
 /server/dandanplay-gateway/target/
 /node_modules/
@@ -69,4 +77,5 @@ docs/error.txt
 # 忽略 errors 和 log
 android/.kotlin/errors
 *.log
+*.hprof
 /.codex_work

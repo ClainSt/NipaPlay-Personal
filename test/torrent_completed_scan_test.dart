@@ -5,6 +5,7 @@ import 'package:nipaplay/models/torrent_task.dart';
 import 'package:nipaplay/services/concurrent_video_processor.dart';
 import 'package:nipaplay/services/scan_service.dart';
 import 'package:nipaplay/services/torrent_download_service.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -72,7 +73,7 @@ void main() {
       ]
     });
     expect(await service.listCompletedVideoPaths(task),
-        ['${root.path}/complete.mp4']);
+        [p.join(root.path, 'complete.mp4')]);
     await File('${root.path}/complete.mp4').delete();
     await expectLater(service.listCompletedVideoPaths(task), throwsStateError);
   });

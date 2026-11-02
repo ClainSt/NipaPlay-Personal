@@ -426,17 +426,17 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
   }
 
   Future<void> _loadHardwareDecoderSetting() async {
-      if (kIsWeb) return;
-      final prefs = await SharedPreferences.getInstance();
-      final resolved = prefs.getBool(_useHardwareDecoderKey) ?? true;
-      final bool changed = resolved != _useHardwareDecoder;
-      _useHardwareDecoder = resolved;
-      PlayerFactory.setUseHardwareDecoder(resolved);
-      await applyHardwareDecoderPreference();
-      if (changed) {
-        _notifyListeners();
-      }
+    if (kIsWeb) return;
+    final prefs = await SharedPreferences.getInstance();
+    final resolved = prefs.getBool(_useHardwareDecoderKey) ?? true;
+    final bool changed = resolved != _useHardwareDecoder;
+    _useHardwareDecoder = resolved;
+    PlayerFactory.setUseHardwareDecoder(resolved);
+    await applyHardwareDecoderPreference();
+    if (changed) {
+      _notifyListeners();
     }
+  }
 
   // 设置弹幕堆叠
   Future<void> setDanmakuStacking(bool stacking) async {
@@ -480,76 +480,76 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
   }
 
   Future<void> setHardwareDecoderEnabled(bool enabled) async {
-      if (_useHardwareDecoder == enabled) {
-        return;
-      }
-      _useHardwareDecoder = enabled;
-      PlayerFactory.setUseHardwareDecoder(enabled);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_useHardwareDecoderKey, enabled);
-      await applyHardwareDecoderPreference();
-      _notifyListeners();
+    if (_useHardwareDecoder == enabled) {
+      return;
     }
+    _useHardwareDecoder = enabled;
+    PlayerFactory.setUseHardwareDecoder(enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_useHardwareDecoderKey, enabled);
+    await applyHardwareDecoderPreference();
+    _notifyListeners();
+  }
 
   String _resolveMpvHwdecValue() {
-      if (Platform.isAndroid) {
-        return 'mediacodec-copy';
-      }
-      // 非 Android（iOS 等）：iOS libmpv 用 vo=libmpv，videotoolbox 直接输出
-      // 会回退 copy-back，统一用 auto-copy（copy-back）保证兼容。
-      return 'auto-copy';
+    if (Platform.isAndroid) {
+      return 'mediacodec-copy';
     }
+    // 非 Android（iOS 等）：iOS libmpv 用 vo=libmpv，videotoolbox 直接输出
+    // 会回退 copy-back，统一用 auto-copy（copy-back）保证兼容。
+    return 'auto-copy';
+  }
 
   Future<void> applyHardwareDecoderPreference() async {
-        if (kIsWeb || _isDisposed) return;
-        final kernelName = player.getPlayerKernelName();
-        if (kernelName == 'MDK') {
-          // 硬解模式 → mdk decoder 列表（auto 系列用现有偏好；specific 强制该解码器）
-          final isAutoMode = const {
-                HwDecType.auto,
-                HwDecType.autoSafe,
-                HwDecType.autoCopy,
-                HwDecType.no,
-              }.contains(_hwdecMode);
-          if (isAutoMode) {
-            await _decoderManager.applyHardwareDecodingPreference(
-              _useHardwareDecoder,
-            );
-          } else {
-            // 特定硬解（videotoolbox/mediacodec/nvdec...）：copy 版用基础名
-            final decoder =
-                _hwdecMode.hwdec.replaceAll('-copy', '').split('-').first;
-            player.setDecoders(MediaType.video, [decoder, 'FFmpeg']);
-            debugPrint('[Decoder] mdk 硬解模式: ${_hwdecMode.hwdec} -> $decoder');
-          }
-          // 软解输出颜色格式：mdk 解码器属性（FFmpeg AVOption，软解生效；
-                  // 硬解输出由硬件决定，pixel_format 不适用）
-                  if (_softDecodePixelFormat.isNotEmpty) {
-                    try {
-                      player.setProperty(
-                        'video.decoder',
-                        'pixel_format=$_softDecodePixelFormat',
-                      );
-                    } catch (_) {}
-                    debugPrint('[Decoder] 软解颜色格式已应用: $_softDecodePixelFormat');
-                  } else {
-                    debugPrint('[Decoder] 软解颜色格式: 自动（内核默认）');
-                  }
-                  SystemResourceMonitor().setPixelFormat(
-                    _softDecodePixelFormat.isEmpty ? 'auto' : _softDecodePixelFormat,
-                  );
-        } else if (kernelName == 'Media Kit') {
-          // 硬解模式直设 mpv hwdec（照搬 PiliPlus）；软解开关关闭时强制 no
-          final hwdecValue =
-              _useHardwareDecoder ? _hwdecMode.hwdec : 'no';
-          player.setProperty('hwdec', hwdecValue);
-          debugPrint('[Decoder] libmpv hwdec: $hwdecValue');
-          // libmpv 的解码器由 hwdec 属性控制（不 setDecoders）；但资源监视器
-          // 的解码器信息来自 DecoderManager，需同步更新，否则开关后仍显示旧的
-          // "硬解 - VT（尝试）"。setDecoders 对 media_kit 仅存 map，无副作用。
-          await _decoderManager.applyHardwareDecodingPreference(_useHardwareDecoder);
-        }
+    if (kIsWeb || _isDisposed) return;
+    final kernelName = player.getPlayerKernelName();
+    if (kernelName == 'MDK') {
+      // 硬解模式 → mdk decoder 列表（auto 系列用现有偏好；specific 强制该解码器）
+      final isAutoMode = const {
+        HwDecType.auto,
+        HwDecType.autoSafe,
+        HwDecType.autoCopy,
+        HwDecType.no,
+      }.contains(_hwdecMode);
+      if (isAutoMode) {
+        await _decoderManager.applyHardwareDecodingPreference(
+          _useHardwareDecoder,
+        );
+      } else {
+        // 特定硬解（videotoolbox/mediacodec/nvdec...）：copy 版用基础名
+        final decoder =
+            _hwdecMode.hwdec.replaceAll('-copy', '').split('-').first;
+        player.setDecoders(MediaType.video, [decoder, 'FFmpeg']);
+        debugPrint('[Decoder] mdk 硬解模式: ${_hwdecMode.hwdec} -> $decoder');
       }
+      // 软解输出颜色格式：mdk 解码器属性（FFmpeg AVOption，软解生效；
+      // 硬解输出由硬件决定，pixel_format 不适用）
+      if (_softDecodePixelFormat.isNotEmpty) {
+        try {
+          player.setProperty(
+            'video.decoder',
+            'pixel_format=$_softDecodePixelFormat',
+          );
+        } catch (_) {}
+        debugPrint('[Decoder] 软解颜色格式已应用: $_softDecodePixelFormat');
+      } else {
+        debugPrint('[Decoder] 软解颜色格式: 自动（内核默认）');
+      }
+      SystemResourceMonitor().setPixelFormat(
+        _softDecodePixelFormat.isEmpty ? 'auto' : _softDecodePixelFormat,
+      );
+    } else if (kernelName == 'Media Kit') {
+      // 硬解模式直设 mpv hwdec（照搬 PiliPlus）；软解开关关闭时强制 no
+      final hwdecValue = _useHardwareDecoder ? _hwdecMode.hwdec : 'no';
+      player.setProperty('hwdec', hwdecValue);
+      debugPrint('[Decoder] libmpv hwdec: $hwdecValue');
+      // libmpv 的解码器由 hwdec 属性控制（不 setDecoders）；但资源监视器
+      // 的解码器信息来自 DecoderManager，需同步更新，否则开关后仍显示旧的
+      // "硬解 - VT（尝试）"。setDecoders 对 media_kit 仅存 map，无副作用。
+      await _decoderManager
+          .applyHardwareDecodingPreference(_useHardwareDecoder);
+    }
+  }
 
   // 播放速度相关方法
 
@@ -1446,8 +1446,7 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     final encoded = prefs.getString(SettingsKeys.titanDanmakuSettings);
     if (encoded == null || encoded.isEmpty) {
       if (globals.isPhone) {
-        _titanDanmakuSettings =
-            _titanDanmakuSettings.copyWith(trackGap: 0.15);
+        _titanDanmakuSettings = _titanDanmakuSettings.copyWith(trackGap: 0.15);
         _notifyListeners();
       }
       return;
@@ -1585,8 +1584,7 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
       final fileName = p.basename(sourcePath);
       final destPath = p.join(fontsDir.path, fileName);
       final destFile = File(destPath);
-      if (!await destFile.exists() ||
-          await destFile.length() != bytes.length) {
+      if (!await destFile.exists() || await destFile.length() != bytes.length) {
         await destFile.writeAsBytes(bytes, flush: true);
       }
       return destPath;
@@ -1884,12 +1882,12 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
   }
 
   String _defaultSubtitleFontNameForPlatform() {
-      // 返回空 = 让内核/libass 用内置默认字体。
-      // 旧值 'Droid Sans Fallback' 在 iOS/Android 系统里并不存在，显式设置
-      // 这个无效字体名会让 libass 加载失败——切换自动/自定义样式后内嵌轨道
-      // 字幕消失（切回自动也不恢复）。
-      return '';
-    }
+    // 返回空 = 让内核/libass 用内置默认字体。
+    // 旧值 'Droid Sans Fallback' 在 iOS/Android 系统里并不存在，显式设置
+    // 这个无效字体名会让 libass 加载失败——切换自动/自定义样式后内嵌轨道
+    // 字幕消失（切回自动也不恢复）。
+    return '';
+  }
 
   Future<void> _loadSubtitleSettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1941,18 +1939,18 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     _subtitleBorderColorValue = prefs.getInt(_subtitleBorderColorKey) ??
         VideoPlayerState.defaultSubtitleBorderColorValue;
     _subtitleShadowColorValue = prefs.getInt(_subtitleShadowColorKey) ??
-            VideoPlayerState.defaultSubtitleShadowColorValue;
-        _externalSubtitleColorValue =
-                prefs.getInt(_externalSubtitleColorKey) ?? 0xFFFFFFFF;
-            _externalSubtitleFontName =
-                prefs.getString(_externalSubtitleFontNameKey) ?? '';
-        _subtitleFontName = prefs.getString(_subtitleFontNameKey) ?? '';
+        VideoPlayerState.defaultSubtitleShadowColorValue;
+    _externalSubtitleColorValue =
+        prefs.getInt(_externalSubtitleColorKey) ?? 0xFFFFFFFF;
+    _externalSubtitleFontName =
+        prefs.getString(_externalSubtitleFontNameKey) ?? '';
+    _subtitleFontName = prefs.getString(_subtitleFontNameKey) ?? '';
     _subtitleFontDir = prefs.getString(_subtitleFontDirKey) ?? '';
     _subtitleOverrideMode = SubtitleStyleOverrideMode.values[(prefs.getInt(
-            _subtitleOverrideModeKey,
-          ) ??
-          VideoPlayerState.defaultSubtitleOverrideMode.index)
-      .clamp(0, SubtitleStyleOverrideMode.values.length - 1)];
+              _subtitleOverrideModeKey,
+            ) ??
+            VideoPlayerState.defaultSubtitleOverrideMode.index)
+        .clamp(0, SubtitleStyleOverrideMode.values.length - 1)];
     // 跨会话恢复的已选字体必须在启动时注册进引擎，否则叠层 fontFamily
     // 静默回退默认字体（用户感知：选了字体但没生效）。
     await ensureSelectedSubtitleFontsRegistered();
@@ -1972,15 +1970,15 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     _notifyListeners();
   }
 
-    /// 设置 SRT 独立字号（不碰内核/内嵌字号）
-    Future<void> setSrtSubtitleScale(double scale) async {
-      final resolved = _clampSubtitleScale(scale);
-      if ((_srtSubtitleScale - resolved).abs() < 0.0001) return;
-      _srtSubtitleScale = resolved;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble(_srtSubtitleScaleKey, resolved);
-      _notifyListeners();
-    }
+  /// 设置 SRT 独立字号（不碰内核/内嵌字号）
+  Future<void> setSrtSubtitleScale(double scale) async {
+    final resolved = _clampSubtitleScale(scale);
+    if ((_srtSubtitleScale - resolved).abs() < 0.0001) return;
+    _srtSubtitleScale = resolved;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_srtSubtitleScaleKey, resolved);
+    _notifyListeners();
+  }
 
   /// 设置 SRT 独立时轴偏移（秒）
   Future<void> setSrtSubtitleDelaySeconds(double seconds) async {
@@ -2004,42 +2002,43 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     _notifyListeners();
   }
 
-
   /// 位置/边距/对齐改动后强制 libass 重新排版（mpv 需 seek 触发字幕重渲染，否则要重载视频才生效）
-    void _refreshSubtitleLayout() {
-      if (kIsWeb || _isDisposed) return;
-      // App 内叠层字幕（SRT/VTT/ASS）的位置是 Flutter UI 层，不占内核轨：
-      // 拖动/调整时无需 seek 内核，seek 反而造成卡顿跳帧（libmpv 实测拖不动）。
-      final extPath = getActiveExternalSubtitlePath();
-      if (extPath != null && extPath.isNotEmpty) {
-        final ext = extPath.toLowerCase();
-        if (ext.endsWith('.srt') || ext.endsWith('.vtt') ||
-            ext.endsWith('.ass') || ext.endsWith('.ssa')) {
-          return;
-        }
-      }
-      // 内嵌轨（简日双语 mkv 等）：同样不 seek。mdk/libass 的 sub-pos/边距
-            // 属性走 setProperty 热更新即可生效，seek 会打断解码/渲染队列导致
-            // 拖滑块画面冻结（音频继续走）。仅内核不支持热更新时才需要 seek。
-            return;
-          }
-
-        Future<void> setSubtitlePosition(double position) async {
-      final resolved = _clampSubtitlePosition(position);
-      if ((_subtitlePosition - resolved).abs() < 0.0001) {
+  void _refreshSubtitleLayout() {
+    if (kIsWeb || _isDisposed) return;
+    // App 内叠层字幕（SRT/VTT/ASS）的位置是 Flutter UI 层，不占内核轨：
+    // 拖动/调整时无需 seek 内核，seek 反而造成卡顿跳帧（libmpv 实测拖不动）。
+    final extPath = getActiveExternalSubtitlePath();
+    if (extPath != null && extPath.isNotEmpty) {
+      final ext = extPath.toLowerCase();
+      if (ext.endsWith('.srt') ||
+          ext.endsWith('.vtt') ||
+          ext.endsWith('.ass') ||
+          ext.endsWith('.ssa')) {
         return;
       }
-      _subtitlePosition = resolved;
-      debugPrint('[SubtitlePos] 设置 sub-pos=$resolved kernel=${player.getPlayerKernelName()}');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble(_subtitlePositionKey, resolved);
+    }
+    // 内嵌轨（简日双语 mkv 等）：同样不 seek。mdk/libass 的 sub-pos/边距
+    // 属性走 setProperty 热更新即可生效，seek 会打断解码/渲染队列导致
+    // 拖滑块画面冻结（音频继续走）。仅内核不支持热更新时才需要 seek。
+    return;
+  }
+
+  Future<void> setSubtitlePosition(double position) async {
+    final resolved = _clampSubtitlePosition(position);
+    if ((_subtitlePosition - resolved).abs() < 0.0001) {
+      return;
+    }
+    _subtitlePosition = resolved;
+    debugPrint(
+        '[SubtitlePos] 设置 sub-pos=$resolved kernel=${player.getPlayerKernelName()}');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_subtitlePositionKey, resolved);
     // 滑块只管内嵌轨（含 libmpv 内核轨 sub-pos）；外挂叠层字幕块由
     // 长按拖动逐条定位，滑块不再同步覆盖各 path 的位置。
     _subtitleManager.globalPositionSeed = resolved;
     // 叠层字幕位置在 Flutter UI 层，不碰内核 sub-margin/sub-pos（MediaKit 限制0~300且报错）
     if (!shouldRenderCurrentExternalSubtitleInApp()) {
-    await applySubtitleStylePreference();
-
+      await applySubtitleStylePreference();
     }
     _refreshSubtitleLayout();
     _notifyListeners();
@@ -2074,8 +2073,7 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     // 水平边距滑块同样只管内嵌轨，不覆盖外挂叠层块的独立摆位。
     // 叠层字幕位置在 Flutter UI 层，不碰内核 sub-margin/sub-pos（MediaKit 限制0~300且报错）
     if (!shouldRenderCurrentExternalSubtitleInApp()) {
-    await applySubtitleStylePreference();
-
+      await applySubtitleStylePreference();
     }
     _refreshSubtitleLayout();
     _notifyListeners();
@@ -2088,8 +2086,7 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     await prefs.setDouble(_subtitleMarginYKey, value);
     // 叠层字幕位置在 Flutter UI 层，不碰内核 sub-margin/sub-pos（MediaKit 限制0~300且报错）
     if (!shouldRenderCurrentExternalSubtitleInApp()) {
-    await applySubtitleStylePreference();
-
+      await applySubtitleStylePreference();
     }
     _refreshSubtitleLayout();
     _notifyListeners();
@@ -2530,35 +2527,34 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
   Future<void> applySubtitleStylePreference() async {
     if (kIsWeb || _isDisposed) return;
     // 叠层字幕(SRT/VTT)样式在 Flutter UI 层，不设内核属性（sub-margin-x 限制0~300，拖拽负值报错/卡热切换）；
-        // 但混挂内核轨 ASS 时仍需继续设置 sub-pos/sub-delay 等，否则位置滑块/延迟对内核字幕不生效。
-        // 内嵌轨（含 mdk 字号 subtitle.font.size）也必须走内核属性——只按"外挂走叠层"就 return 会漏掉内嵌轨。
-        final hasKernelExternalSubtitle = activeExternalSubtitlePaths
-            .any((p) => !externalSubtitleRenderedInApp(p));
-        final hasEmbeddedSubtitleActive = player.activeSubtitleTracks.isNotEmpty;
-        if (!hasKernelExternalSubtitle &&
-            !hasEmbeddedSubtitleActive) {
-          return;
-        }
+    // 但混挂内核轨 ASS 时仍需继续设置 sub-pos/sub-delay 等，否则位置滑块/延迟对内核字幕不生效。
+    // 内嵌轨（含 mdk 字号 subtitle.font.size）也必须走内核属性——只按"外挂走叠层"就 return 会漏掉内嵌轨。
+    final hasKernelExternalSubtitle = activeExternalSubtitlePaths
+        .any((p) => !externalSubtitleRenderedInApp(p));
+    final hasEmbeddedSubtitleActive = player.activeSubtitleTracks.isNotEmpty;
+    if (!hasKernelExternalSubtitle && !hasEmbeddedSubtitleActive) {
+      return;
+    }
     try {
       final playerKernelName = player.getPlayerKernelName();
       // Erika 取同一组 mpv 字幕属性，由它的适配器合成一次 setSubtitleStyle。
       if (playerKernelName != 'Media Kit' &&
           playerKernelName != 'MDK' &&
           playerKernelName != 'Erika') {
-              return;
-            }
-            // mdk 属性名是 subtitle.scale（sub-scale 是 mpv 的）——之前用错
-                  // 导致 mdk 内嵌轨字号设置不生效（默认 22 小字号，对比 libmpv 明显小）
-                  player.setProperty(
-                    playerKernelName == 'MDK' ? 'subtitle.scale' : 'sub-scale',
-                    _subtitleScale.toStringAsFixed(2),
-                  );
-                  // mdk 内嵌轨（srt/text）字号基准调大（默认 22 太小，对齐 libmpv 视觉）
-                  if (playerKernelName == 'MDK') {
-                    try {
-                      player.setProperty('subtitle.font.size', '45');
-                    } catch (_) {}
-                  }
+        return;
+      }
+      // mdk 属性名是 subtitle.scale（sub-scale 是 mpv 的）——之前用错
+      // 导致 mdk 内嵌轨字号设置不生效（默认 22 小字号，对比 libmpv 明显小）
+      player.setProperty(
+        playerKernelName == 'MDK' ? 'subtitle.scale' : 'sub-scale',
+        _subtitleScale.toStringAsFixed(2),
+      );
+      // mdk 内嵌轨（srt/text）字号基准调大（默认 22 太小，对齐 libmpv 视觉）
+      if (playerKernelName == 'MDK') {
+        try {
+          player.setProperty('subtitle.font.size', '45');
+        } catch (_) {}
+      }
       player.setProperty('sub-delay', subtitleDelaySeconds.toStringAsFixed(2));
       player.setProperty('sub-pos', _subtitlePosition.toStringAsFixed(0));
       player.setProperty('sub-align-x', _subtitleAlignXToMpv(_subtitleAlignX));
@@ -2578,17 +2574,17 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
         _subtitleShadowOffset.toStringAsFixed(1),
       );
       // 内嵌轨道颜色：字幕设置面板（subtitleColor 系）应用 sub-color——
-            // 面板颜色只渲染内嵌/内核轨；外挂 SRT 叠层用独立 externalSubtitleColor
-            // （长按外挂调色板），互不污染。
-            player.setProperty('sub-color', _colorToMpvHex(subtitleColor));
-            player.setProperty(
-              'sub-border-color',
-              _colorToMpvHex(subtitleBorderColor),
-            );
-            player.setProperty(
-              'sub-shadow-color',
-              _colorToMpvHex(subtitleShadowColor),
-            );
+      // 面板颜色只渲染内嵌/内核轨；外挂 SRT 叠层用独立 externalSubtitleColor
+      // （长按外挂调色板），互不污染。
+      player.setProperty('sub-color', _colorToMpvHex(subtitleColor));
+      player.setProperty(
+        'sub-border-color',
+        _colorToMpvHex(subtitleBorderColor),
+      );
+      player.setProperty(
+        'sub-shadow-color',
+        _colorToMpvHex(subtitleShadowColor),
+      );
       player.setProperty('sub-bold', _subtitleBold ? 'yes' : 'no');
       player.setProperty('sub-italic', _subtitleItalic ? 'yes' : 'no');
 
@@ -2842,28 +2838,27 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getInt(_screenshotSaveTargetKey);
       _screenshotSaveTarget = ScreenshotSaveTargetDisplay.fromPrefs(stored);
-    _screenshotQuality =
-        ScreenshotQualityDisplay.fromPrefs(prefs.getInt(_screenshotQualityKey));
-    _screenshotFormat =
-        ScreenshotFormat.fromPreference(prefs.getString(_screenshotFormatKey));
-    _screenshotCaptureIncludesDanmaku =
-        prefs.getBool(_screenshotIncludeDanmakuKey) ?? true;
-    _screenshotCaptureIncludesSubtitles =
-        prefs.getBool(_screenshotIncludeSubtitlesKey) ?? true;
-    _screenshotCropLetterbox =
-        prefs.getBool(_screenshotCropLetterboxKey) ?? true;
-    final aspectModeName = prefs.getString(_videoAspectModeKey);
-    _videoAspectMode = VideoAspectMode.values.firstWhere(
-      (m) => m.name == aspectModeName,
-      orElse: () => VideoAspectMode.contain,
-    );
-    _softDecodePixelFormat =
-            prefs.getString(_softDecodePixelFormatKey) ?? '';
-        final hwdecName = prefs.getString(_hwdecModeKey);
-        _hwdecMode = HwDecType.values.firstWhere(
-          (h) => h.name == hwdecName,
-          orElse: () => HwDecType.auto,
-        );
+      _screenshotQuality = ScreenshotQualityDisplay.fromPrefs(
+          prefs.getInt(_screenshotQualityKey));
+      _screenshotFormat = ScreenshotFormat.fromPreference(
+          prefs.getString(_screenshotFormatKey));
+      _screenshotCaptureIncludesDanmaku =
+          prefs.getBool(_screenshotIncludeDanmakuKey) ?? true;
+      _screenshotCaptureIncludesSubtitles =
+          prefs.getBool(_screenshotIncludeSubtitlesKey) ?? true;
+      _screenshotCropLetterbox =
+          prefs.getBool(_screenshotCropLetterboxKey) ?? true;
+      final aspectModeName = prefs.getString(_videoAspectModeKey);
+      _videoAspectMode = VideoAspectMode.values.firstWhere(
+        (m) => m.name == aspectModeName,
+        orElse: () => VideoAspectMode.contain,
+      );
+      _softDecodePixelFormat = prefs.getString(_softDecodePixelFormatKey) ?? '';
+      final hwdecName = prefs.getString(_hwdecModeKey);
+      _hwdecMode = HwDecType.values.firstWhere(
+        (h) => h.name == hwdecName,
+        orElse: () => HwDecType.auto,
+      );
       _notifyListeners();
     } catch (e) {
       debugPrint('加载截图默认保存位置失败: $e');
@@ -2926,6 +2921,7 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
         duration: duration.inMilliseconds,
         watchProgress: progress,
         lastWatchTime: DateTime.now(),
+        mediaKey: _currentMediaKey,
       );
       await initializePlayer(
         path,
@@ -2967,44 +2963,45 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
   }
 
   /// 软解输出颜色格式（空=内核默认；mdk 走 video.decoder 属性）
-    String get softDecodePixelFormat => _softDecodePixelFormat;
+  String get softDecodePixelFormat => _softDecodePixelFormat;
 
-    Future<void> setSoftDecodePixelFormat(String value) async {
-      final normalized = value.trim();
-      if (_softDecodePixelFormat == normalized) return;
-      _softDecodePixelFormat = normalized;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_softDecodePixelFormatKey, normalized);
-      await applyHardwareDecoderPreference();
-      // 颜色格式切换后自动重载当前视频使其生效（保留播放位置，保持暂停）
-      final path = currentVideoPath;
-      if (path != null && path.isNotEmpty && hasVideo) {
-        final posMs = _position.inMilliseconds;
-        final history = WatchHistoryItem(
-          filePath: path,
-          animeName: animeTitle ?? '',
-          episodeTitle: episodeTitle,
-          episodeId: episodeId,
-          animeId: animeId,
-          lastPosition: posMs,
-          duration: duration.inMilliseconds,
-          watchProgress: progress,
-          lastWatchTime: DateTime.now(),
-        );
-        await initializePlayer(
-          path,
-          historyItem: history,
-          resetManualDanmakuOffset: false,
-          episodeFileSelectionHandled: true,
-        );
-        // 重载后保持暂停（沿用原 autoPlay:false 语义），用户手动继续播放
-        if (hasVideo) {
-          pause();
-        }
-        debugPrint('[Decoder] 颜色格式切换，已重载视频以应用 pixel_format=$normalized');
+  Future<void> setSoftDecodePixelFormat(String value) async {
+    final normalized = value.trim();
+    if (_softDecodePixelFormat == normalized) return;
+    _softDecodePixelFormat = normalized;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_softDecodePixelFormatKey, normalized);
+    await applyHardwareDecoderPreference();
+    // 颜色格式切换后自动重载当前视频使其生效（保留播放位置，保持暂停）
+    final path = currentVideoPath;
+    if (path != null && path.isNotEmpty && hasVideo) {
+      final posMs = _position.inMilliseconds;
+      final history = WatchHistoryItem(
+        filePath: path,
+        animeName: animeTitle ?? '',
+        episodeTitle: episodeTitle,
+        episodeId: episodeId,
+        animeId: animeId,
+        lastPosition: posMs,
+        duration: duration.inMilliseconds,
+        watchProgress: progress,
+        lastWatchTime: DateTime.now(),
+        mediaKey: _currentMediaKey,
+      );
+      await initializePlayer(
+        path,
+        historyItem: history,
+        resetManualDanmakuOffset: false,
+        episodeFileSelectionHandled: true,
+      );
+      // 重载后保持暂停（沿用原 autoPlay:false 语义），用户手动继续播放
+      if (hasVideo) {
+        pause();
       }
-      _notifyListeners();
+      debugPrint('[Decoder] 颜色格式切换，已重载视频以应用 pixel_format=$normalized');
     }
+    _notifyListeners();
+  }
 
   Future<void> setScreenshotCaptureIncludesSubtitles(bool value) async {
     if (_screenshotCaptureIncludesSubtitles == value) return;

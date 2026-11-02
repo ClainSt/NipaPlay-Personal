@@ -430,6 +430,10 @@ class WatchHistoryDatabase {
   Future<void> insertOrUpdateWatchHistory(WatchHistoryItem item) async {
     if (kIsWeb) {
       await _ensureWebStoreLoaded();
+      _webStore.removeWhere((key, value) =>
+          key != item.filePath &&
+          value.mediaKey == item.mediaKey &&
+          key.startsWith('cloudmedia://asset/'));
       _webStore[item.filePath] = item.copyWith(mediaKey: _mediaKeyFor(item));
       _scheduleWebStorePersist();
       return;
@@ -440,6 +444,13 @@ class WatchHistoryDatabase {
     //debugPrint('数据库保存历史记录: filePath=${item.filePath}, animeName=${item.animeName}, episodeId=${item.episodeId}, animeId=${item.animeId}');
 
     try {
+      if (item.mediaKey?.startsWith('cloudmedia:') == true) {
+        await db.delete(
+          'watch_history',
+          where: 'media_key = ? AND file_path LIKE ?',
+          whereArgs: [item.mediaKey, 'cloudmedia://asset/%'],
+        );
+      }
       await db.insert(
         'watch_history',
         {
@@ -521,13 +532,24 @@ class WatchHistoryDatabase {
       var skipped = 0;
       final positions = <String, int>{};
       for (final item in incoming) {
-        final existing = _webStore[item.filePath];
+        WatchHistoryItem? existing = _webStore[item.filePath];
+        if (existing == null && item.mediaKey != null) {
+          for (final value in _webStore.values) {
+            if (value.mediaKey == item.mediaKey ||
+                _mediaKeyFor(value) == item.mediaKey) {
+              existing = value;
+              break;
+            }
+          }
+        }
         if (existing == null ||
             item.lastWatchTime.isAfter(existing.lastWatchTime)) {
-          _webStore[item.filePath] = item.copyWith(
+          final merged = item.copyWith(
+            filePath: existing?.filePath ?? item.filePath,
             thumbnailPath: item.thumbnailPath ?? existing?.thumbnailPath,
           );
-          positions[item.filePath] = item.lastPosition;
+          _webStore[merged.filePath] = merged;
+          positions[merged.filePath] = item.lastPosition;
           restored++;
         } else {
           if (item.thumbnailPath != null && existing.thumbnailPath == null) {
@@ -552,12 +574,36 @@ class WatchHistoryDatabase {
       var restored = 0;
       var skipped = 0;
       final positions = <String, int>{};
+      final existingByMediaKey = <String, WatchHistoryItem>{};
+      final mediaKeys = incoming
+          .map((item) => item.mediaKey)
+          .whereType<String>()
+          .toSet()
+          .toList();
+      if (mediaKeys.isNotEmpty) {
+        for (var offset = 0; offset < mediaKeys.length; offset += 400) {
+          final batch = mediaKeys.skip(offset).take(400).toList();
+          final rows = await txn.query(
+            'watch_history',
+            where: 'media_key IN (${List.filled(batch.length, '?').join(',')})',
+            whereArgs: batch,
+          );
+          for (final row in rows) {
+            final item = _mapToWatchHistoryItem(row);
+            if (item.mediaKey != null) {
+              existingByMediaKey[item.mediaKey!] = item;
+            }
+          }
+        }
+      }
       final writes = txn.batch();
       for (final item in incoming) {
         final local = existing[item.filePath] ??
-            existing[_iosAlternativePath(item.filePath)];
+            existing[_iosAlternativePath(item.filePath)] ??
+            (item.mediaKey == null ? null : existingByMediaKey[item.mediaKey]);
         if (local == null || item.lastWatchTime.isAfter(local.lastWatchTime)) {
           final merged = item.copyWith(
+            filePath: local?.filePath ?? item.filePath,
             thumbnailPath: item.thumbnailPath ?? local?.thumbnailPath,
           );
           writes.insert(
@@ -565,8 +611,11 @@ class WatchHistoryDatabase {
             _databaseValues(merged),
             conflictAlgorithm: ConflictAlgorithm.replace,
           );
-          positions[item.filePath] = item.lastPosition;
-          existing[item.filePath] = merged;
+          positions[merged.filePath] = item.lastPosition;
+          existing[merged.filePath] = merged;
+          if (merged.mediaKey != null) {
+            existingByMediaKey[merged.mediaKey!] = merged;
+          }
           restored++;
         } else {
           if (item.thumbnailPath != null && local.thumbnailPath == null) {
@@ -895,6 +944,28 @@ class WatchHistoryDatabase {
     }
   }
 
+  Future<WatchHistoryItem?> getHistoryByMediaKey(String mediaKey) async {
+    if (mediaKey.trim().isEmpty) return null;
+    if (kIsWeb) {
+      await _ensureWebStoreLoaded();
+      for (final item in _webStore.values) {
+        if (item.mediaKey == mediaKey || _mediaKeyFor(item) == mediaKey) {
+          return item;
+        }
+      }
+      return null;
+    }
+    final db = await database;
+    final rows = await db.query(
+      'watch_history',
+      where: 'media_key = ?',
+      whereArgs: [mediaKey],
+      orderBy: 'last_watch_time DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : _mapToWatchHistoryItem(rows.first);
+  }
+
   // 根据共享媒体的 episode shareId 获取历史记录列表
   Future<List<WatchHistoryItem>> getHistoriesBySharedEpisodeId(
       String shareEpisodeId) async {
@@ -1136,17 +1207,25 @@ class WatchHistoryDatabase {
     if (kIsWeb) {
       await _ensureWebStoreLoaded();
       _webStore.remove(filePath);
+      _webStore.removeWhere((_, item) => item.mediaKey == filePath);
       _scheduleWebStorePersist();
       return;
     }
     final db = await database;
 
     try {
-      await db.delete(
+      final deleted = await db.delete(
         'watch_history',
         where: 'file_path = ?',
         whereArgs: [filePath],
       );
+      if (deleted == 0) {
+        await db.delete(
+          'watch_history',
+          where: 'media_key = ?',
+          whereArgs: [filePath],
+        );
+      }
     } catch (e) {
       debugPrint('删除观看历史失败: $e');
       rethrow;
@@ -1238,9 +1317,10 @@ class WatchHistoryDatabase {
     final originalPath = map['file_path'] as String? ?? '';
     final item = WatchHistoryItem(
       filePath: originalPath,
-      mediaKey: originalPath.isEmpty
-          ? null
-          : MediaIdentityResolver.forPath(originalPath),
+      mediaKey: map['media_key']?.toString() ??
+          (originalPath.isEmpty
+              ? null
+              : MediaIdentityResolver.forPath(originalPath)),
       animeName: map['anime_name'],
       episodeTitle: map['episode_title'],
       episodeId: (map['episode_id'] as num?)?.toInt(),
@@ -1271,7 +1351,7 @@ class WatchHistoryDatabase {
   }
 
   static String _mediaKeyFor(WatchHistoryItem item) =>
-      MediaIdentityResolver.forPath(item.filePath);
+      item.mediaKey ?? MediaIdentityResolver.forPath(item.filePath);
 
   List<String> _legacyPathAliases(String filePath) {
     final webDav = WebDAVService.instance.resolveMediaPath(filePath);

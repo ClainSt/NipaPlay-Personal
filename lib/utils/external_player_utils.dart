@@ -1,4 +1,3 @@
-
 // lib/utils/external_player_utils.dart
 // 外部播放器相关工具函数
 
@@ -9,7 +8,6 @@ import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/blur_snackbar.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
-
 
 /// 解析应交给外部播放器的媒体地址.
 ///
@@ -22,6 +20,16 @@ import 'package:nipaplay/utils/media_source_utils.dart';
 /// 新格式 WebDAV/SMB 持久化路径会在返回前转换为播放器能够访问的 HTTP URL.
 /// 找不到连接或 SMB 本地代理启动失败时返回 `null`.
 Future<String?> resolveExternalPlayerMediaPath(PlayableItem item) async {
+  // A stable WebDAV source carries the connection identity needed by the
+  // local streaming proxy. Prefer it over a direct URL attached by a catalog
+  // caller so authenticated and redirected files also work in external mpv.
+  if (MediaSourceUtils.isNewWebDavPath(item.videoPath)) {
+    await WebDAVService.instance.initialize();
+    final proxied = await MediaSourceUtils.resolveWebDavPathToUrlInitialized(
+        item.videoPath);
+    if (proxied != null && proxied.isNotEmpty) return proxied;
+  }
+
   final sessionUrl = item.playbackSession?.streamUrl;
   String finalPath;
   if (sessionUrl != null && sessionUrl.trim().isNotEmpty) {
@@ -51,7 +59,8 @@ Future<String?> resolveExternalPlayerMediaPath(PlayableItem item) async {
 /// 其 Overlay 在 Navigator 内部而非祖先）, 此时 [BlurSnackBar.show] 会抛
 /// "No Overlay widget found". 这里吞掉异常, 避免阻断播放器启动主流程——
 /// snackbar 只是提示, 启动逻辑必须继续.
-void safeShowSnack(BuildContext context, String msg, {void Function(String)? log}) {
+void safeShowSnack(BuildContext context, String msg,
+    {void Function(String)? log}) {
   try {
     if (!context.mounted) return;
     BlurSnackBar.show(context, msg);

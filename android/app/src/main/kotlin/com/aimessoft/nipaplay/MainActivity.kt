@@ -547,10 +547,10 @@ class MainActivity: FlutterActivity() {
                     put(MediaStore.Images.Media.DISPLAY_NAME, source.name)
                     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/NipaPlay")
+                        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/NipaPlay Personal")
                         put(MediaStore.Images.Media.IS_PENDING, 1)
                     } else {
-                        val album = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "NipaPlay")
+                        val album = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "NipaPlay Personal")
                         if (!album.exists() && !album.mkdirs()) {
                             throw IllegalStateException("Unable to create the NipaPlay album")
                         }

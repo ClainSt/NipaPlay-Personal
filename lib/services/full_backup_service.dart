@@ -16,6 +16,7 @@ import 'package:nipaplay/services/dandanplay_remote_service.dart';
 import 'package:nipaplay/services/bangumi_service.dart';
 import 'package:nipaplay/services/incremental_sync_native_codec.dart';
 import 'package:nipaplay/services/backup_category.dart';
+import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/utils/auto_sync_settings.dart';
 import 'package:crypto/crypto.dart';
 
@@ -300,6 +301,15 @@ class FullBackupService {
     // 完整备份，并避免增量同步时不同番剧互相覆盖。
     result.addAll(await BangumiService.instance.exportAnimeDetailsForBackup());
 
+    // 11. Cloud catalog entities use logical source IDs and relative paths.
+    // The incremental sync sanitizer removes device-local WebDAV mappings.
+    final cloudRecords =
+        await CloudMediaIndexDatabase.instance.exportSyncRecords();
+    result['cloudMediaIndex'] = {
+      for (final entry in cloudRecords.entries)
+        'cloudMediaIndex:${entry.key}': entry.value,
+    };
+
     return result;
   }
 
@@ -366,6 +376,7 @@ class FullBackupService {
       'lastWatchTime': item.lastWatchTime.toIso8601String(),
       'isFromScan': item.isFromScan,
       'videoHash': item.videoHash,
+      'mediaKey': item.mediaKey,
     };
     if (includeThumbnail && item.thumbnailPath != null) {
       try {
@@ -400,6 +411,7 @@ class FullBackupService {
                 'animeId': item.animeId,
                 'videoHash': item.videoHash,
                 'isFromScan': item.isFromScan,
+                'mediaKey': item.mediaKey,
               })
           .toList();
 
@@ -713,6 +725,23 @@ class FullBackupService {
     try {
       final prefs = await SharedPreferences.getInstance();
 
+      final rawCloudIndex = mediaLibrariesData['cloudMediaIndex'];
+      if (rawCloudIndex is Map) {
+        var restoredCloudRecords = 0;
+        for (final entry in rawCloudIndex.entries) {
+          final key = entry.key.toString();
+          if (!key.startsWith('cloudMediaIndex:')) continue;
+          await CloudMediaIndexDatabase.instance.applySyncRecord(
+            key: key.substring('cloudMediaIndex:'.length),
+            value: entry.value is Map
+                ? Map<String, Object?>.from(entry.value as Map)
+                : null,
+          );
+          restoredCloudRecords++;
+        }
+        result.restoredCount += restoredCloudRecords;
+      }
+
       // 1. 恢复本地媒体库路径
       final localLibs =
           mediaLibrariesData['localMediaLibraries'] as List<dynamic>?;
@@ -946,6 +975,7 @@ class FullBackupService {
                 DateTime.parse(recordData['lastWatchTime'] as String),
             isFromScan: recordData['isFromScan'] as bool? ?? false,
             videoHash: recordData['videoHash'] as String?,
+            mediaKey: recordData['mediaKey'] as String?,
           );
 
           // 恢复截图
