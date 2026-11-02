@@ -199,6 +199,45 @@ void main() {
     expect(requested, isFalse);
   });
 
+  test('original cover is verified before its independent IDs are saved',
+      () async {
+    await database.upsertPendingWork(
+        sourceId: 'original-cover',
+        workKey: 'Show',
+        tmdbId: 1234,
+        tmdbType: 'tv',
+        title: 'Show');
+    var verified = false;
+    final scraper = CloudMediaScraper(
+      originalCoverLookup: (id) async {
+        expect(id, 1234);
+        return {
+          'success': true,
+          'bangumi': {
+            'animeId': 5678,
+            'animeTitle': 'Show',
+            'imageUrl': 'https://images.example/cover.jpg'
+          }
+        };
+      },
+      coverLoader: (url) async {
+        expect(url, 'https://images.example/cover.jpg');
+        final before =
+            (await database.getWorks(sourceId: 'original-cover')).single;
+        expect(before['dandanplay_anime_id'], isNull);
+        verified = true;
+      },
+    );
+    expect(
+        await scraper.rescrapeWork(sourceId: 'original-cover', workKey: 'Show'),
+        isTrue);
+    expect(verified, isTrue);
+    final saved = (await database.getWorks(sourceId: 'original-cover')).single;
+    expect(saved['tmdb_tv_id'], 1234);
+    expect(saved['dandanplay_anime_id'], 5678);
+    expect(saved['poster_url'], 'https://images.example/cover.jpg');
+  });
+
   test('season lookup stores titles and stills and reuses the persisted cache',
       () async {
     await database.upsertTmdbWorkMetadata(

@@ -2214,6 +2214,7 @@ class DandanplayService {
   static Future<Map<String, dynamic>?> getBangumiByTmdbId(
     int tmdbId, {
     int? seasonNumber,
+    bool requireUniqueMatch = false,
   }) async {
     try {
       final appSecret = await getAppSecret();
@@ -2265,6 +2266,10 @@ class DandanplayService {
       }
 
       final candidates = animes.cast<Map<String, dynamic>>().toList();
+      if (requireUniqueMatch && candidates.length != 1) {
+        debugPrint('[弹弹play服务] TMDB $tmdbId 候选不唯一，保留现有作品信息');
+        return null;
+      }
       int selectedIndex = 0;
       if (candidates.length > 1) {
         candidates.sort(

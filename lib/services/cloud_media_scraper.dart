@@ -10,6 +10,7 @@ import 'package:nipaplay/services/tmdb_metadata_service.dart';
 import 'package:nipaplay/utils/anime_info_parse.dart';
 import 'package:nipaplay/utils/media_filename_parser.dart';
 import 'package:path/path.dart' as p;
+import 'package:nipaplay/utils/image_cache_manager.dart';
 
 class CloudMediaScrapeResult {
   const CloudMediaScrapeResult({required this.matched, required this.failed});
@@ -23,8 +24,15 @@ class CloudMediaScrapeResult {
 class CloudMediaScraper {
   CloudMediaScraper({
     TmdbMetadataService Function()? tmdbMetadataServiceFactory,
-  }) : _tmdbMetadataServiceFactory =
-            tmdbMetadataServiceFactory ?? TmdbMetadataService.new;
+    Future<Map<String, dynamic>?> Function(int)? originalCoverLookup,
+    Future<void> Function(String)? coverLoader,
+  })  : _tmdbMetadataServiceFactory =
+            tmdbMetadataServiceFactory ?? TmdbMetadataService.new,
+        _originalCoverLookup = originalCoverLookup,
+        _coverLoader = coverLoader;
+
+  final Future<Map<String, dynamic>?> Function(int)? _originalCoverLookup;
+  final Future<void> Function(String)? _coverLoader;
 
   final TmdbMetadataService Function() _tmdbMetadataServiceFactory;
 
@@ -47,6 +55,9 @@ class CloudMediaScraper {
           '',
     );
     if (tmdbId == null || tmdbId <= 0) return false;
+
+    if (await _restoreOriginalCover(sourceId, workKey, tmdbId,
+        record['tmdb_type']?.toString() ?? 'unknown')) return true;
 
     final service = _tmdbMetadataServiceFactory();
     try {
@@ -119,6 +130,11 @@ class CloudMediaScraper {
           }
           final tmdbId = idAsset.tmdbId!;
           final tmdbType = idAsset.tmdbType.name;
+          if (await _restoreOriginalCover(
+              sourceId, workKey, tmdbId, tmdbType)) {
+            matched++;
+            continue;
+          }
           await CloudMediaIndexDatabase.instance.upsertPendingWork(
             sourceId: sourceId,
             workKey: workKey,
@@ -181,7 +197,8 @@ class CloudMediaScraper {
             continue;
           }
           try {
-            final response = await DandanplayService.getBangumiByTmdbId(tmdbId);
+            final response = await DandanplayService.getBangumiByTmdbId(tmdbId,
+                requireUniqueMatch: true);
             final bangumi = response?['bangumi'];
             if (response == null || bangumi is! Map<String, dynamic>) {
               if (await _scrapeByTitle(
@@ -255,6 +272,49 @@ class CloudMediaScraper {
       tmdbMetadata.close();
     }
     return CloudMediaScrapeResult(matched: matched, failed: failed);
+  }
+
+  Future<bool> _restoreOriginalCover(
+      String sourceId, String workKey, int tmdbId, String type) async {
+    if (type == 'movie') return false;
+    final database = CloudMediaIndexDatabase.instance;
+    final existing = (await database.getWorks(sourceId: sourceId))
+        .where((w) => w['work_key'] == workKey);
+    if (existing.isNotEmpty && existing.first['relation_locked'] == 1) {
+      return true;
+    }
+    try {
+      final response = await (_originalCoverLookup?.call(tmdbId) ??
+          DandanplayService.getBangumiByTmdbId(tmdbId,
+              requireUniqueMatch: true));
+      final details = response?['bangumi'];
+      if (details is! Map<String, dynamic>) return false;
+      final anime = BangumiAnime.fromDandanplayDetail(details);
+      if (anime.id <= 0 || !_isRemoteImage(anime.imageUrl)) return false;
+      // Use the same download, decoding and persistent cache as the poster
+      // widget. Do not publish an unverified URL over an existing good cover.
+      if (_coverLoader != null) {
+        await _coverLoader(anime.imageUrl);
+      } else {
+        final cache = ImageCacheManager.instance;
+        await cache.loadImage(anime.imageUrl);
+        cache.releaseImage(anime.imageUrl);
+      }
+      await database.upsertWorkMetadata(
+          sourceId: sourceId,
+          workKey: workKey,
+          tmdbId: tmdbId,
+          tmdbType: 'tv',
+          response: response!,
+          anime: anime);
+      debugPrint('[CloudMediaScraper] TMDB $tmdbId -> 弹弹play ${anime.id}: '
+          '封面解码及缓存成功，域名 ${Uri.parse(anime.imageUrl).host}');
+      return true;
+    } catch (_) {
+      debugPrint('[CloudMediaScraper] TMDB $tmdbId 原版封面链路失败，保留现有记录');
+      return existing.isNotEmpty &&
+          _isRemoteImage(existing.first['poster_url']?.toString());
+    }
   }
 
   Future<bool> _scrapeByTitle({
@@ -532,7 +592,8 @@ class CloudMediaScraper {
     required int tmdbId,
   }) async {
     try {
-      final response = await DandanplayService.getBangumiByTmdbId(tmdbId);
+      final response = await DandanplayService.getBangumiByTmdbId(tmdbId,
+          requireUniqueMatch: true);
       final bangumi = response?['bangumi'];
       if (bangumi is! Map) return false;
       final poster = await _fetchBangumiPoster(

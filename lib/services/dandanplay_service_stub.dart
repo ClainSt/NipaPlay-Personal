@@ -1681,6 +1681,7 @@ class DandanplayService {
   static Future<Map<String, dynamic>?> getBangumiByTmdbId(
     int tmdbId, {
     int? seasonNumber,
+    bool requireUniqueMatch = false,
   }) async {
     debugPrint('[弹弹play服务-Web] getBangumiByTmdbId not supported on web');
     return null;
