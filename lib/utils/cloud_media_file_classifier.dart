@@ -1,5 +1,10 @@
 /// Conservative filename classification shared by scans and old index repair.
 abstract final class CloudMediaFileClassifier {
+  static bool isPreview(String name) => RegExp(
+        r'予告|預告|预告|(^|[^a-z])(trailer|teaser|preview)(?=[^a-z]|$)',
+        caseSensitive: false,
+      ).hasMatch(name);
+
   static String classifyAsset(String directory, String name, String kind) {
     final path = directory.replaceAll('\\', '/').toLowerCase();
     final lower = name.toLowerCase();
@@ -10,6 +15,7 @@ abstract final class CloudMediaFileClassifier {
     )) {
       return 'extra';
     }
+    if (isPreview(name)) return kind == 'video' ? 'extra' : 'metadata';
     if (RegExp(
       r'(^|[^a-z])(ncoped|ncop|nced|menu|pv|cm|ova|oad|sp|mv|visual commentary)([^a-z]|$)',
       caseSensitive: false,

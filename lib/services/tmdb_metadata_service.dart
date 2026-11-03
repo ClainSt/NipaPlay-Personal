@@ -140,6 +140,13 @@ class TmdbMetadataService {
     required Map<String, Object?> work,
     required List<Map<String, Object?>> assets,
   }) async {
+    assets = assets
+        .map((asset) => <String, Object?>{
+              'work_key': work['work_key'],
+              'work_title': work['title_cn'] ?? work['title'],
+              ...asset,
+            })
+        .toList();
     final seasons = <String, dynamic>{};
     try {
       final metadata = jsonDecode(work['metadata_json']?.toString() ?? '{}');
@@ -211,7 +218,7 @@ class TmdbMetadataService {
         0,
     };
     final token = (await _tokenReader())?.trim();
-    if (needed.isEmpty || token == null || token.isEmpty) {
+    if (token == null || token.isEmpty) {
       if (mappingNeedsCache) {
         await CloudMediaIndexDatabase.instance.cacheTmdbEpisodeSeasons(
           sourceId: sourceId,
@@ -226,38 +233,100 @@ class TmdbMetadataService {
     }
     final apiKey = RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token);
     final fetched = <String, dynamic>{};
-    for (final season in needed) {
+    Future<void> fetchSeasons(Set<int> requested) async {
+      for (final season in requested) {
+        try {
+          final response = await _client.get(
+            Uri.https('api.themoviedb.org', '/3/tv/$id/season/$season', {
+              'language': 'zh-CN',
+              if (apiKey) 'api_key': token,
+            }),
+            headers: {
+              'Accept': 'application/json',
+              if (!apiKey) 'Authorization': 'Bearer $token',
+            },
+          ).timeout(const Duration(seconds: 15));
+          if (response.statusCode != 200) continue;
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          if (decoded is! Map ||
+              decoded['season_number'] != season ||
+              decoded['episodes'] is! List) {
+            continue;
+          }
+          fetched['$season'] = (decoded['episodes'] as List)
+              .whereType<Map>()
+              .map((e) => {
+                    'episode_number': e['episode_number'],
+                    'name': e['name'],
+                    'still_path': e['still_path'],
+                    'air_date': e['air_date'],
+                  })
+              .toList();
+        } catch (_) {
+          debugPrint('[TMDB] 第 $season 季剧集信息暂时不可用');
+        }
+      }
+    }
+
+    await fetchSeasons(needed);
+    seasons.addAll(fetched);
+    final unseasoned = assets
+        .where((asset) =>
+            CloudMediaAssetPresentation.category(asset) == 'episode' &&
+            CloudMediaAssetPresentation.explicitSeasonNumber(asset) == null &&
+            (int.tryParse('${asset['episode_number']}') ?? 0) > 0)
+        .toList();
+    // A cached season 1 must not prevent later absolute episodes from loading.
+    if (seasons['1'] is List &&
+        seasons['season_episode_counts'] is! Map &&
+        unseasoned.any((asset) =>
+            CloudMediaAssetPresentation.episode(asset, seasons) == null)) {
       try {
         final response = await _client.get(
-          Uri.https('api.themoviedb.org', '/3/tv/$id/season/$season', {
+          Uri.https('api.themoviedb.org', '/3/tv/$id', {
             'language': 'zh-CN',
             if (apiKey) 'api_key': token,
           }),
           headers: {
             'Accept': 'application/json',
-            if (!apiKey) 'Authorization': 'Bearer $token',
+            if (!apiKey) 'Authorization': 'Bearer $token'
           },
         ).timeout(const Duration(seconds: 15));
-        if (response.statusCode != 200) continue;
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-        if (decoded is! Map ||
-            decoded['season_number'] != season ||
-            decoded['episodes'] is! List) {
-          continue;
+        if (response.statusCode == 200) {
+          final details = jsonDecode(utf8.decode(response.bodyBytes));
+          if (details is Map &&
+              details['id'] == id &&
+              details['seasons'] is List) {
+            final counts = <String, int>{};
+            for (final season
+                in (details['seasons'] as List).whereType<Map>()) {
+              final number = int.tryParse('${season['season_number']}');
+              final count = int.tryParse('${season['episode_count']}');
+              if (number != null && number > 0 && count != null && count > 0) {
+                counts['$number'] = count;
+              }
+            }
+            if (counts.containsKey('1')) {
+              seasons['season_episode_counts'] = counts;
+              fetched['season_episode_counts'] = counts;
+            }
+          }
         }
-        fetched['$season'] = (decoded['episodes'] as List)
-            .whereType<Map>()
-            .map((e) => {
-                  'episode_number': e['episode_number'],
-                  'name': e['name'],
-                  'still_path': e['still_path'],
-                  'air_date': e['air_date'],
-                })
-            .toList();
       } catch (_) {
-        debugPrint('[TMDB] 第 $season 季剧集信息暂时不可用');
+        debugPrint('[TMDB] 连续集号的季度信息暂时不可用');
       }
     }
+    final additional = <int>{};
+    for (final asset in unseasoned) {
+      final coordinates =
+          CloudMediaAssetPresentation.episodeCoordinates(asset, seasons);
+      if (coordinates != null &&
+          !needed.contains(coordinates.season) &&
+          !seasons.containsKey('${coordinates.season}')) {
+        additional.add(coordinates.season);
+      }
+    }
+    await fetchSeasons(additional);
     seasons.addAll(fetched);
     attachSpecialMapping();
     if (specialAssets.isNotEmpty && fetched.containsKey('0')) {

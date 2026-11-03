@@ -1,3 +1,5 @@
+import 'package:nipaplay/utils/cloud_media_file_classifier.dart';
+
 /// Filename tokens are used only for matching and short extra labels.
 class CloudMediaAssetPresentation {
   static const _matchableSpecialTypes = {'OVA', 'OAD', 'SP'};
@@ -9,6 +11,7 @@ class CloudMediaAssetPresentation {
 
   static String? extraTitle(Map<String, Object?> asset) {
     final name = asset['name']?.toString() ?? '';
+    if (CloudMediaFileClassifier.isPreview(name)) return null;
     final match = _extraToken.firstMatch(name);
     if (match == null) {
       final interview = RegExp(
@@ -71,6 +74,9 @@ class CloudMediaAssetPresentation {
   }
 
   static String extraType(Map<String, Object?> asset) {
+    if (CloudMediaFileClassifier.isPreview('${asset['name'] ?? ''}')) {
+      return '预告';
+    }
     final match = _extraToken.firstMatch(asset['name']?.toString() ?? '');
     if (match != null) return match.group(2)!.toUpperCase();
     final path = '${asset['relative_path'] ?? ''}'.replaceAll('\\', '/');
@@ -83,7 +89,10 @@ class CloudMediaAssetPresentation {
   static String category(Map<String, Object?> asset) =>
       extraType(asset) == 'MENU' ? 'extra' : '${asset['category']}';
 
-  static int seasonNumber(Map<String, Object?> asset) {
+  static int seasonNumber(Map<String, Object?> asset) =>
+      explicitSeasonNumber(asset) ?? 1;
+
+  static int? explicitSeasonNumber(Map<String, Object?> asset) {
     final explicit = int.tryParse('${asset['season_number'] ?? ''}');
     if (explicit != null) return explicit;
     // A relative asset path can omit the selected library root, so retain
@@ -98,7 +107,7 @@ class CloudMediaAssetPresentation {
       final season = _seasonFromText('$value');
       if (season != null) return season;
     }
-    return 1;
+    return null;
   }
 
   static int? _seasonFromText(String value) {
@@ -139,15 +148,36 @@ class CloudMediaAssetPresentation {
     return null;
   }
 
+  /// Only unseasoned files may use absolute numbering across consecutive
+  /// TMDB seasons. Explicit SxxExx/folder seasons keep their local numbers.
+  static ({int season, int number})? episodeCoordinates(
+      Map<String, Object?> asset, Map<String, dynamic> seasons) {
+    final number = int.tryParse('${asset['episode_number'] ?? ''}');
+    if (number == null || number <= 0) return null;
+    final explicit = explicitSeasonNumber(asset);
+    if (explicit != null) return (season: explicit, number: number);
+    final counts = seasons['season_episode_counts'];
+    if (counts is Map) {
+      var remaining = number;
+      for (var season = 1; season <= counts.length; season++) {
+        final count = int.tryParse('${counts['$season'] ?? ''}');
+        if (count == null || count <= 0) break;
+        if (remaining <= count) return (season: season, number: remaining);
+        remaining -= count;
+      }
+    }
+    return (season: 1, number: number);
+  }
+
   static Map? episode(
       Map<String, Object?> asset, Map<String, dynamic> seasons) {
     if (category(asset) != 'episode') return null;
-    final entries = seasons['${seasonNumber(asset)}'];
+    final coordinates = episodeCoordinates(asset, seasons);
+    if (coordinates == null) return null;
+    final entries = seasons['${coordinates.season}'];
     if (entries is! List) return null;
-    final number = int.tryParse('${asset['episode_number'] ?? ''}');
-    if (number == null) return null;
     for (final entry in entries.whereType<Map>()) {
-      if (entry['episode_number'] == number) return entry;
+      if (entry['episode_number'] == coordinates.number) return entry;
     }
     return null;
   }

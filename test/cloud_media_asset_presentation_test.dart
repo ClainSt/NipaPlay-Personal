@@ -3,6 +3,73 @@ import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/utils/cloud_media_asset_presentation.dart';
 
 void main() {
+  test(
+      'continuous episodes span seasons without overriding explicit season numbers',
+      () {
+    final seasons = <String, dynamic>{
+      'season_episode_counts': {'1': 12, '2': 12},
+      '1': [
+        for (var i = 1; i <= 12; i++)
+          {'episode_number': i, 'name': 'S1E$i', 'still_path': '/s1e$i.jpg'}
+      ],
+      '2': [
+        for (var i = 1; i <= 12; i++)
+          {'episode_number': i, 'name': 'S2E$i', 'still_path': '/s2e$i.jpg'}
+      ],
+    };
+    for (var i = 1; i <= 24; i++) {
+      final asset = <String, Object?>{
+        'category': 'episode',
+        'name': i == 13
+            ? '[Moozzi2] 3D Kanojo Real Girl - 13 (BD 1920x1080 x.264 Flac).mkv'
+            : '3D Kanojo [$i].mkv',
+        'episode_number': i
+      };
+      expect(CloudMediaAssetPresentation.episode(asset, seasons)?['name'],
+          i <= 12 ? 'S1E$i' : 'S2E${i - 12}');
+      expect(CloudMediaAssetPresentation.episode(asset, seasons)?['still_path'],
+          i <= 12 ? '/s1e$i.jpg' : '/s2e${i - 12}.jpg');
+    }
+    expect(
+        CloudMediaAssetPresentation.episode({
+          'category': 'episode',
+          'name': 'Show S01E13.mkv',
+          'episode_number': 13
+        }, seasons),
+        isNull);
+    expect(
+        CloudMediaAssetPresentation.episode({
+          'category': 'episode',
+          'name': 'Show S02E01.mkv',
+          'episode_number': 1
+        }, seasons)?['name'],
+        'S2E1');
+    expect(
+        CloudMediaAssetPresentation.episode(
+            {'category': 'extra', 'episode_number': 13}, seasons),
+        isNull);
+    expect(
+        CloudMediaAssetPresentation.episode(
+            {'category': 'episode', 'episode_number': 25}, seasons),
+        isNull);
+    expect(
+        CloudMediaAssetPresentation.episode(
+            {'category': 'episode', 'episode_number': 13},
+            {'1': seasons['1'], '2': seasons['2']}),
+        isNull,
+        reason: 'Do not guess season boundaries without provider counts.');
+  });
+  test('WEB previews retain filename labels and cannot match OVA metadata', () {
+    const asset = <String, Object?>{
+      'name': 'Show WEB予告#01.mkv',
+      'category': 'extra'
+    };
+    expect(CloudMediaAssetPresentation.extraType(asset), '预告');
+    expect(CloudMediaAssetPresentation.extraDisplayTitle(asset), asset['name']);
+    expect(
+        CloudMediaAssetPresentation.isSpecialMappingCandidate(asset), isFalse);
+  });
+
   test('separates season folders and uses work context for relative paths', () {
     for (final label in [
       '第二季',

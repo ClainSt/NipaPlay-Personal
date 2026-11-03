@@ -104,6 +104,32 @@ String _propfindDocument(List<String> resources) =>
     '<d:multistatus xmlns:d="DAV:">${resources.join()}</d:multistatus>';
 
 void main() {
+  test('Moozzi2 3D Kanojo continuous episode 13 is a main episode', () {
+    const name =
+        '[Moozzi2] 3D Kanojo Real Girl - 13 (BD 1920x1080 x.264 Flac).mkv';
+    expect(CloudMediaScanner.episodeNumberFromName(name), 13);
+    expect(
+        CloudMediaScanner.classifyAsset('3D Kanojo Real Girl', name, 'video'),
+        'episode');
+  });
+
+  test('Japanese WEB previews are extras before hash episode parsing', () {
+    for (var number = 1; number <= 12; number++) {
+      final name =
+          '[AI-Raws] 29歳独身中堅冒険者の日常 WEB予告#${number.toString().padLeft(2, '0')} (BD HEVC 1920x1080 FLAC)[D10ABF0C].mkv';
+      expect(CloudMediaScanner.classifyAsset('Show', name, 'video'), 'extra');
+    }
+    for (final marker in ['WEB预告', 'WEB預告', 'Trailer', 'Preview', 'Teaser']) {
+      expect(
+          CloudMediaScanner.classifyAsset(
+              'Show', 'Show $marker #01.mkv', 'video'),
+          'extra');
+    }
+    expect(
+        CloudMediaScanner.classifyAsset('Show', 'Show #01 WEB-DL.mkv', 'video'),
+        'episode');
+  });
+
   test('22/7 and numeric releases extract episode tokens, not title numbers',
       () {
     for (final name in [

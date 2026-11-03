@@ -122,6 +122,47 @@ void main() {
         'episode');
   });
 
+  test(
+      'read repairs previously misclassified previews but preserves manual locks',
+      () async {
+    const preview =
+        '[AI-Raws] 29歳独身中堅冒険者の日常 WEB予告#01 (BD HEVC 1920x1080 FLAC)[D10ABF0C].mkv';
+    await database.upsertAssets([
+      for (final name in [preview, 'Show WEB予告#02.mkv'])
+        {
+          'source_id': 'test',
+          'relative_path': name,
+          'name': name,
+          'kind': 'video',
+          'category': 'episode',
+          'episode_number': 1,
+          'work_key': '.'
+        }
+    ]);
+    await database.updateAssetRelation(
+        sourceId: 'test',
+        relativePath: 'Show WEB予告#02.mkv',
+        workKey: '.',
+        category: 'episode');
+    final rows = await database.getAssets(sourceId: 'test');
+    expect(
+        rows.singleWhere((row) => row['name'] == preview)['category'], 'extra');
+    expect(rows.singleWhere((row) => row['name'] == preview)['episode_number'],
+        isNull);
+    expect(
+        rows.singleWhere(
+            (row) => row['name'] == 'Show WEB予告#02.mkv')['category'],
+        'episode');
+    expect(rows.singleWhere((row) => row['name'] == filename)['category'],
+        'episode');
+    final db = await database.database;
+    expect(
+        (await db.query('cloud_media_asset',
+                where: 'name = ?', whereArgs: [preview]))
+            .single['category'],
+        'extra');
+  });
+
   for (final width in [320.0, 400.0, 840.0]) {
     testWidgets('file names and edit controls work at width $width',
         (tester) async {

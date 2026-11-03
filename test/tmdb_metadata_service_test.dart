@@ -300,6 +300,88 @@ void main() {
     expect(metadata['tmdb_episode_seasons']['2'][0]['name'], '第二季第一集');
   });
 
+  test(
+      'cached season one discovers absolute episodes 13 to 24 and caches season two',
+      () async {
+    final first = [
+      for (var i = 1; i <= 12; i++) {'episode_number': i, 'name': 'First $i'}
+    ];
+    await database.upsertTmdbWorkMetadata(
+        sourceId: 'absolute',
+        workKey: '3D Kanojo',
+        tmdbId: 999,
+        tmdbType: 'tv',
+        title: '3D彼女',
+        originalTitle: '3D Kanojo',
+        overview: '',
+        posterUrl: '/poster.jpg',
+        rating: null,
+        metadataJson: jsonEncode({
+          'tmdb_episode_seasons': {'1': first}
+        }));
+    final work = (await database.getWorks(sourceId: 'absolute')).single;
+    final requests = <String>[];
+    var failSeasonTwo = true;
+    final service = TmdbMetadataService(
+        tokenReader: () async => 'token',
+        client: MockClient((request) async {
+          requests.add(request.url.path);
+          if (request.url.path == '/3/tv/999') {
+            return http.Response(
+                jsonEncode({
+                  'id': 999,
+                  'seasons': [
+                    {'season_number': 0, 'episode_count': 5},
+                    {'season_number': 1, 'episode_count': 12},
+                    {'season_number': 2, 'episode_count': 12},
+                  ]
+                }),
+                200);
+          }
+          expect(request.url.path, '/3/tv/999/season/2');
+          if (failSeasonTwo) return http.Response('', 503);
+          return http.Response(
+              jsonEncode({
+                'season_number': 2,
+                'episodes': [
+                  for (var i = 1; i <= 12; i++)
+                    {
+                      'episode_number': i,
+                      'name': 'Second $i',
+                      'still_path': '/second$i.jpg'
+                    }
+                ]
+              }),
+              200);
+        }));
+    addTearDown(service.close);
+    final assets = <Map<String, Object?>>[
+      for (var i = 1; i <= 24; i++)
+        {
+          'category': 'episode',
+          'name': i == 13
+              ? '[Moozzi2] 3D Kanojo Real Girl - 13 (BD 1920x1080 x.264 Flac).mkv'
+              : '3D Kanojo [$i].mkv',
+          'episode_number': i
+        }
+    ];
+    final failed = await service.loadEpisodeSeasons(
+        sourceId: 'absolute', work: work, assets: assets);
+    expect(failed.containsKey('2'), isFalse);
+    failSeasonTwo = false;
+    final seasons = await service.loadEpisodeSeasons(
+        sourceId: 'absolute', work: work, assets: assets);
+    expect(
+        CloudMediaAssetPresentation.episode(assets[12], seasons)?['still_path'],
+        '/second1.jpg');
+    expect(CloudMediaAssetPresentation.episode(assets[23], seasons)?['name'],
+        'Second 12');
+    final cached = await service.loadEpisodeSeasons(
+        sourceId: 'absolute', work: work, assets: assets);
+    expect(cached, seasons);
+    expect(requests, ['/3/tv/999', '/3/tv/999/season/2', '/3/tv/999/season/2']);
+  });
+
   test('movie artwork lookup caches a landscape TMDB backdrop', () async {
     await database.upsertTmdbWorkMetadata(
       sourceId: 'movie-artwork-library',

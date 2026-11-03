@@ -950,7 +950,26 @@ class CloudMediaIndexDatabase {
       final directory =
           path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '';
       final name = '${row['name']}';
+      final preview = CloudMediaFileClassifier.isPreview(name);
       if (row['kind'] == 'video' &&
+          row['relation_locked'] != 1 &&
+          preview &&
+          (row['category'] == 'episode' || row['category'] == 'review')) {
+        const values = <String, Object?>{
+          'category': 'extra',
+          'episode_number': null
+        };
+        batch.update('cloud_media_asset', values,
+            where:
+                'source_id = ? AND relative_path = ? AND relation_locked = 0 AND category = ?',
+            whereArgs: [
+              row['source_id'],
+              row['relative_path'],
+              row['category']
+            ]);
+        result.add({...row, ...values});
+        changed = true;
+      } else if (row['kind'] == 'video' &&
           row['category'] == 'review' &&
           row['relation_locked'] != 1 &&
           CloudMediaFileClassifier.classifyAsset(directory, name, 'video') ==

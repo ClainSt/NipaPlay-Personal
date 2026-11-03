@@ -219,12 +219,9 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
         _assets = assets
             .where((a) => a['kind'] == 'video')
             .map((asset) => {
+                  'work_key': _work['work_key'],
+                  'work_title': _work['title_cn'] ?? _work['title'],
                   ...asset,
-                  'season_number': CloudMediaAssetPresentation.seasonNumber({
-                    'work_key': _work['work_key'],
-                    'work_title': _work['title_cn'] ?? _work['title'],
-                    ...asset,
-                  }),
                 })
             .toList();
         _workArtwork = null;
