@@ -14,10 +14,14 @@ export 'package:nipaplay/services/cloud_media_models.dart';
 /// Read-only WebDAV catalog scan. It only enumerates directories via PROPFIND;
 /// it never opens media files or requests video byte ranges.
 class CloudMediaScanner {
-  CloudMediaScanner({WebDAVService? webDav})
-      : _webDav = webDav ?? WebDAVService.instance;
+  CloudMediaScanner({
+    WebDAVService? webDav,
+    CloudMediaScraper Function()? scraperFactory,
+  })  : _webDav = webDav ?? WebDAVService.instance,
+        _scraperFactory = scraperFactory ?? CloudMediaScraper.new;
 
   final WebDAVService _webDav;
+  final CloudMediaScraper Function() _scraperFactory;
 
   static const videoExtensions = <String>{
     'mkv',
@@ -128,14 +132,10 @@ class CloudMediaScanner {
     progress.start(source: 'WebDAV', rootPath: rootPath);
     try {
       final database = CloudMediaIndexDatabase.instance;
-      final libraryId = await database.ensureLibraryRoot(
-        connectionId: connection.id,
-        rootPath: rootPath,
-      );
       final result = await scan(
         connection: connection,
         rootPath: rootPath,
-        sourceId: libraryId,
+        sourceId: connection.id,
         recursive: recursive,
         onProgress: onProgress,
         onDetailedProgress: (directoriesVisited, videosFound) {
@@ -144,6 +144,17 @@ class CloudMediaScanner {
             videosFound: videosFound,
           );
         },
+      );
+      final removedDuplicateRoots =
+          await database.deduplicateEquivalentLibraryRoots(
+        connectionId: connection.id,
+      );
+      final libraryId = await database.resolveLibraryRootFromScan(
+        connectionId: connection.id,
+        rootPath: rootPath,
+        scannedAssets: result.assets
+            .map((asset) => _assetIndexMap(asset, connection.id))
+            .toList(growable: false),
       );
       progress.updateIndexing(
         filesIndexed: 0,
@@ -162,13 +173,23 @@ class CloudMediaScanner {
           );
         },
       );
+      if (removedDuplicateRoots > 0 && !indexedResult.inventoryChanged) {
+        unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+      }
       final videoCount =
           result.assets.where((asset) => asset.kind == 'video').length;
+      final changes = [
+        if (indexedResult.addedFiles > 0) '新增 ${indexedResult.addedFiles} 个文件',
+        if (indexedResult.removedFiles > 0)
+          '移除 ${indexedResult.removedFiles} 个文件',
+      ].join('，');
       progress.complete(
-        message: videoCount == 0
-            ? '扫描完成：未找到可展示的视频文件'
-            : '扫描完成：发现 $videoCount 个视频，匹配 ${indexedResult.matchedWorks} 部作品'
-                '${indexedResult.failedWorks == 0 ? '' : '，${indexedResult.failedWorks} 部待确认'}',
+        message: !indexedResult.inventoryChanged
+            ? '扫描完成：文件清单未变化，沿用 ${indexedResult.reusedWorks} 部作品资料'
+            : indexedResult.matchedWorks == 0
+                ? '扫描完成：$changes；其余作品资料未变更'
+                : '扫描完成：$changes，更新 ${indexedResult.matchedWorks} 部作品'
+                    '${indexedResult.failedWorks == 0 ? '' : '，${indexedResult.failedWorks} 部待确认'}',
         directoriesVisited: progress.directoriesVisited,
         videosFound: videoCount,
         matchedWorks: indexedResult.matchedWorks,
@@ -196,10 +217,6 @@ class CloudMediaScanner {
     }
     final connectionId = 'local:$root';
     final database = CloudMediaIndexDatabase.instance;
-    final libraryId = await database.ensureLibraryRoot(
-      connectionId: connectionId,
-      rootPath: root,
-    );
     final pending = <String>[root];
     final visited = <String>{};
     final assets = <CloudMediaAsset>[];
@@ -225,7 +242,7 @@ class CloudMediaScanner {
             ? ''
             : relativeDirectory.replaceAll('\\', '/');
         assets.add(CloudMediaAsset(
-          sourceId: libraryId,
+          sourceId: connectionId,
           relativePath: relativePath.replaceAll('\\', '/'),
           workKey: _workKey(root, p.join(root, relativeDirectory)),
           name: name,
@@ -240,9 +257,21 @@ class CloudMediaScanner {
       }
       onProgress?.call(visited.length);
     }
+    final result =
+        CloudMediaScanResult(rootPath: root, assets: List.unmodifiable(assets));
+    await database.deduplicateEquivalentLibraryRoots(
+      connectionId: connectionId,
+    );
+    final libraryId = await database.resolveLibraryRootFromScan(
+      connectionId: connectionId,
+      rootPath: root,
+      scannedAssets: assets
+          .map((asset) => _assetIndexMap(asset, connectionId))
+          .toList(growable: false),
+    );
     return _indexAssets(
       libraryId,
-      CloudMediaScanResult(rootPath: root, assets: List.unmodifiable(assets)),
+      result,
     );
   }
 
@@ -252,24 +281,41 @@ class CloudMediaScanner {
               int failed)?
           onScrapeProgress}) async {
     final database = CloudMediaIndexDatabase.instance;
+    final previousAssets = await database.getAssets(sourceId: libraryId);
+    final previousPaths = previousAssets
+        .map((asset) => asset['relative_path'].toString())
+        .toSet();
+    final inputPaths = result.assets.map((asset) => asset.relativePath).toSet();
+    final addedPaths = inputPaths.difference(previousPaths);
+    final removedPaths = previousPaths.difference(inputPaths);
+    final inventoryChanged = addedPaths.isNotEmpty || removedPaths.isNotEmpty;
+    final addedWorkKeys = result.assets
+        .where((asset) =>
+            asset.kind == 'video' && addedPaths.contains(asset.relativePath))
+        .map((asset) => asset.workKey)
+        .toSet();
+
+    if (!inventoryChanged) {
+      await database.markLibraryRootScanned(libraryId);
+      final upgradedCovers =
+          await _scraperFactory().upgradeLegacyDandanplayCovers(
+        sourceId: libraryId,
+      );
+      final repairedSummaries =
+          await database.repairProviderTranslationCredits(sourceId: libraryId);
+      if (upgradedCovers > 0 || repairedSummaries > 0) {
+        unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+      }
+      final works = await database.getWorks(sourceId: libraryId);
+      return result.copyWith(
+        libraryId: libraryId,
+        inventoryChanged: false,
+        reusedWorks: works.length,
+      );
+    }
+
     await database.upsertAssets(
-      result.assets
-          .map(
-            (asset) => {
-              'source_id': asset.sourceId,
-              'relative_path': asset.relativePath,
-              'work_key': asset.workKey,
-              'name': asset.name,
-              'kind': asset.kind,
-              'category': asset.category,
-              'episode_number': asset.episodeNumber,
-              'size': asset.size,
-              'modified_at': asset.modified?.toUtc().toIso8601String(),
-              'tmdb_id': asset.tmdbId,
-              'tmdb_type': asset.tmdbType.name,
-            },
-          )
-          .toList(),
+      result.assets.map((asset) => _assetIndexMap(asset, libraryId)).toList(),
     );
     if (result.assets.isNotEmpty) {
       CloudMediaScanProgress.instance.updateIndexing(
@@ -283,20 +329,57 @@ class CloudMediaScanner {
           result.assets.map((asset) => asset.relativePath).toSet(),
     );
     await database.markLibraryRootScanned(libraryId);
-    final scrapeResult = await CloudMediaScraper().scrape(
-      sourceId: libraryId,
-      rootPath: result.rootPath,
-      assets: result.assets,
-      onProgress: onScrapeProgress,
-    );
+    final changedAssets = addedWorkKeys.isEmpty
+        ? const <CloudMediaAsset>[]
+        : result.assets
+            .where((asset) => addedWorkKeys.contains(asset.workKey))
+            .toList(growable: false);
+    final scraper = _scraperFactory();
+    final scrapeResult = changedAssets.isEmpty
+        ? const CloudMediaScrapeResult(matched: 0, failed: 0)
+        : await scraper.scrape(
+            sourceId: libraryId,
+            rootPath: result.rootPath,
+            assets: changedAssets,
+            onProgress: onScrapeProgress,
+          );
     await database.removeOrphanedWorks(libraryId);
+    await scraper.upgradeLegacyDandanplayCovers(sourceId: libraryId);
+    await database.repairProviderTranslationCredits(sourceId: libraryId);
     unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+    final remainingWorkKeys = result.assets
+        .where((asset) => asset.kind == 'video')
+        .map((asset) => asset.workKey)
+        .toSet()
+        .difference(addedWorkKeys);
     return result.copyWith(
       libraryId: libraryId,
       matchedWorks: scrapeResult.matched,
       failedWorks: scrapeResult.failed,
+      inventoryChanged: true,
+      addedFiles: addedPaths.length,
+      removedFiles: removedPaths.length,
+      reusedWorks: remainingWorkKeys.length,
     );
   }
+
+  static Map<String, Object?> _assetIndexMap(
+    CloudMediaAsset asset,
+    String sourceId,
+  ) =>
+      {
+        'source_id': sourceId,
+        'relative_path': asset.relativePath,
+        'work_key': asset.workKey,
+        'name': asset.name,
+        'kind': asset.kind,
+        'category': asset.category,
+        'episode_number': asset.episodeNumber,
+        'size': asset.size,
+        'modified_at': asset.modified?.toUtc().toIso8601String(),
+        'tmdb_id': asset.tmdbId,
+        'tmdb_type': asset.tmdbType.name,
+      };
 
   static String? _kind(String name) {
     final dot = name.lastIndexOf('.');

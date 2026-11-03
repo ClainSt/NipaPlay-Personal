@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'package:nipaplay/models/bangumi_model.dart';
 import 'package:nipaplay/utils/anime_info_parse.dart';
+import 'package:nipaplay/utils/anime_text_sanitizer.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 
@@ -249,6 +250,302 @@ class CloudMediaIndexDatabase {
       where: 'id = ?',
       whereArgs: [libraryId],
     );
+  }
+
+  /// Finds an existing logical library for a completed scan.
+  ///
+  /// CloudDrive mounts can expose the same folder under different root paths.
+  /// When the relative inventory, root folder name and connection match, the
+  /// existing library is reused and its root path is updated instead of
+  /// creating a second poster wall.
+  Future<String> resolveLibraryRootFromScan({
+    required String connectionId,
+    required String rootPath,
+    required Iterable<Map<String, Object?>> scannedAssets,
+  }) async {
+    final db = await database;
+    final normalizedPath = _normalizeRootPath(rootPath);
+    final rootName = _rootName(normalizedPath);
+    final signature = assetInventorySignature(scannedAssets);
+
+    final direct = await db.query(
+      'cloud_media_library_root',
+      where: 'connection_id = ? AND root_path = ?',
+      whereArgs: [connectionId, normalizedPath],
+      limit: 1,
+    );
+    if (direct.isNotEmpty) return direct.first['id']! as String;
+
+    final candidates = await db.query(
+      'cloud_media_library_root',
+      where: 'connection_id = ? AND name = ?',
+      whereArgs: [connectionId, rootName],
+    );
+    for (final candidate in candidates) {
+      final id = candidate['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final assets = await getAssets(sourceId: id);
+      if (assetInventorySignature(assets) != signature) continue;
+      await db.update(
+        'cloud_media_library_root',
+        {'root_path': normalizedPath},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return id;
+    }
+
+    return ensureLibraryRoot(
+      connectionId: connectionId,
+      rootPath: normalizedPath,
+    );
+  }
+
+  /// Collapses library roots that point at the same cloud inventory.
+  ///
+  /// This repairs catalogs created before root-path aliases were recognized.
+  /// It never merges roots with different file inventories or root names.
+  Future<int> deduplicateEquivalentLibraryRoots({String? connectionId}) async {
+    final db = await database;
+    final roots = await db.query(
+      'cloud_media_library_root',
+      where: connectionId == null ? null : 'connection_id = ?',
+      whereArgs: connectionId == null ? null : [connectionId],
+    );
+    final groups = <String, List<Map<String, Object?>>>{};
+    for (final root in roots) {
+      final id = root['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final assets = await getAssets(sourceId: id);
+      if (assets.isEmpty) continue;
+      final groupKey =
+          '${root['connection_id']}\n${root['name']}\n${assetInventorySignature(assets)}';
+      groups.putIfAbsent(groupKey, () => []).add(root);
+    }
+
+    var removed = 0;
+    await db.transaction((txn) async {
+      for (final group in groups.values) {
+        if (group.length < 2) continue;
+        if (await _hasConflictingLocks(txn, group)) continue;
+        final ranked = await _rankLibraryRoots(txn, group);
+        final canonical = ranked.first;
+        final canonicalId = canonical['id']! as String;
+        for (final duplicate in ranked.skip(1)) {
+          final duplicateId = duplicate['id']! as String;
+          await _mergeLibraryRootData(
+            txn,
+            canonicalId: canonicalId,
+            duplicateId: duplicateId,
+          );
+          removed++;
+        }
+      }
+    });
+    return removed;
+  }
+
+  Future<bool> _hasConflictingLocks(
+    DatabaseExecutor db,
+    List<Map<String, Object?>> roots,
+  ) async {
+    final workOwners = <String, Set<String>>{};
+    final assetOwners = <String, Set<String>>{};
+    for (final root in roots) {
+      final sourceId = root['id']?.toString() ?? '';
+      final works = await db.query(
+        'cloud_media_work',
+        columns: ['work_key'],
+        where: 'source_id = ? AND relation_locked = 1',
+        whereArgs: [sourceId],
+      );
+      for (final work in works) {
+        final workKey = work['work_key']?.toString() ?? '';
+        workOwners.putIfAbsent(workKey, () => {}).add(sourceId);
+      }
+      final assets = await db.query(
+        'cloud_media_asset',
+        columns: ['relative_path'],
+        where: 'source_id = ? AND relation_locked = 1',
+        whereArgs: [sourceId],
+      );
+      for (final asset in assets) {
+        final relativePath = asset['relative_path']?.toString() ?? '';
+        assetOwners.putIfAbsent(relativePath, () => {}).add(sourceId);
+      }
+    }
+    return workOwners.values.any((owners) => owners.length > 1) ||
+        assetOwners.values.any((owners) => owners.length > 1);
+  }
+
+  /// Stable inventory key used to distinguish file add/remove from a plain
+  /// rescan. Work/category are derived metadata and must not prevent a root
+  /// alias from being recognized after classification rules change.
+  static String assetInventorySignature(
+    Iterable<Map<String, Object?>> assets,
+  ) {
+    final entries = assets
+        .map((asset) => [
+              asset['relative_path']?.toString() ?? '',
+              asset['kind']?.toString() ?? '',
+              asset['size']?.toString() ?? '',
+            ].join('\u0001'))
+        .toList()
+      ..sort();
+    return entries.join('\u0002');
+  }
+
+  String _rootName(String rootPath) {
+    final normalized = _normalizeRootPath(rootPath);
+    final segments =
+        normalized.split('/').where((segment) => segment.isNotEmpty).toList();
+    return segments.isEmpty ? '/' : segments.last;
+  }
+
+  Future<List<Map<String, Object?>>> _rankLibraryRoots(
+    DatabaseExecutor db,
+    List<Map<String, Object?>> roots,
+  ) async {
+    final ranked = <({Map<String, Object?> root, int score, String updated})>[];
+    for (final root in roots) {
+      final id = root['id']?.toString() ?? '';
+      final works = await db.query(
+        'cloud_media_work',
+        columns: [
+          'metadata_status',
+          'dandanplay_anime_id',
+          'bangumi_id',
+          'relation_locked',
+          'updated_at',
+        ],
+        where: 'source_id = ?',
+        whereArgs: [id],
+      );
+      var score = 0;
+      var latest = '';
+      final lockedAssetRows = await db.rawQuery(
+        '''
+            SELECT COUNT(*) FROM cloud_media_asset
+            WHERE source_id = ? AND relation_locked = 1
+            ''',
+        [id],
+      );
+      final lockedAssets = int.tryParse(
+            lockedAssetRows.first.values.first?.toString() ?? '',
+          ) ??
+          0;
+      score += lockedAssets * 50000;
+      for (final work in works) {
+        if (work['relation_locked'] == 1) score += 100000;
+        if (work['dandanplay_anime_id'] != null) score += 10000;
+        if (work['bangumi_id'] != null) score += 1000;
+        if (work['metadata_status']?.toString() == 'matched') score += 500;
+        final updated = work['updated_at']?.toString() ?? '';
+        if (updated.compareTo(latest) > 0) latest = updated;
+      }
+      ranked.add((root: root, score: score, updated: latest));
+    }
+    ranked.sort((a, b) {
+      final score = b.score.compareTo(a.score);
+      if (score != 0) return score;
+      final updated = b.updated.compareTo(a.updated);
+      if (updated != 0) return updated;
+      return a.root['id'].toString().compareTo(b.root['id'].toString());
+    });
+    return ranked.map((entry) => entry.root).toList(growable: false);
+  }
+
+  Future<void> _mergeLibraryRootData(
+    Transaction txn, {
+    required String canonicalId,
+    required String duplicateId,
+  }) async {
+    final duplicateWorks = await txn.query(
+      'cloud_media_work',
+      where: 'source_id = ?',
+      whereArgs: [duplicateId],
+    );
+    for (final work in duplicateWorks) {
+      final workKey = work['work_key']?.toString() ?? '';
+      final existing = await txn.query(
+        'cloud_media_work',
+        where: 'source_id = ? AND work_key = ?',
+        whereArgs: [canonicalId, workKey],
+        limit: 1,
+      );
+      if (existing.isNotEmpty &&
+          _workMetadataScore(existing.first) >= _workMetadataScore(work)) {
+        continue;
+      }
+      final merged = Map<String, Object?>.from(work)
+        ..['source_id'] = canonicalId;
+      await txn.insert(
+        'cloud_media_work',
+        merged,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    final duplicateAssets = await txn.query(
+      'cloud_media_asset',
+      where: 'source_id = ?',
+      whereArgs: [duplicateId],
+    );
+    for (final asset in duplicateAssets) {
+      final relativePath = asset['relative_path']?.toString() ?? '';
+      await txn.rawUpdate(
+        '''
+        UPDATE cloud_media_asset SET
+          tmdb_id=COALESCE(tmdb_id, ?),
+          tmdb_tv_id=COALESCE(tmdb_tv_id, ?),
+          tmdb_movie_id=COALESCE(tmdb_movie_id, ?),
+          tmdb_unknown_id=COALESCE(tmdb_unknown_id, ?),
+          work_id=COALESCE(work_id, ?)
+        WHERE source_id = ? AND relative_path = ?
+        ''',
+        [
+          asset['tmdb_id'],
+          asset['tmdb_tv_id'],
+          asset['tmdb_movie_id'],
+          asset['tmdb_unknown_id'],
+          asset['work_id'],
+          canonicalId,
+          relativePath,
+        ],
+      );
+    }
+
+    await txn.update(
+      'cloud_media_relation_history',
+      {'source_id': canonicalId},
+      where: 'source_id = ?',
+      whereArgs: [duplicateId],
+    );
+    await txn.delete(
+      'cloud_media_asset',
+      where: 'source_id = ?',
+      whereArgs: [duplicateId],
+    );
+    await txn.delete(
+      'cloud_media_work',
+      where: 'source_id = ?',
+      whereArgs: [duplicateId],
+    );
+    await txn.delete(
+      'cloud_media_library_root',
+      where: 'id = ?',
+      whereArgs: [duplicateId],
+    );
+  }
+
+  int _workMetadataScore(Map<String, Object?> work) {
+    var score = 0;
+    if (work['relation_locked'] == 1) score += 100000;
+    if (work['dandanplay_anime_id'] != null) score += 10000;
+    if (work['bangumi_id'] != null) score += 1000;
+    if (work['metadata_status']?.toString() == 'matched') score += 500;
+    score += work['poster_url']?.toString().length ?? 0;
+    return score;
   }
 
   /// Repairs old scans of a library root that is itself a TMDB work folder.
@@ -889,14 +1186,111 @@ class CloudMediaIndexDatabase {
     });
   }
 
+  Future<void> cacheTmdbMovieArtwork({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String artworkUrl,
+  }) =>
+      cacheTmdbWorkArtwork(
+        sourceId: sourceId,
+        workKey: workKey,
+        tmdbId: tmdbId,
+        tmdbType: 'movie',
+        artworkUrl: artworkUrl,
+      );
+
+  Future<void> cacheTmdbWorkArtwork({
+    required String sourceId,
+    required String workKey,
+    required int tmdbId,
+    required String tmdbType,
+    required String artworkUrl,
+  }) async {
+    if (tmdbType != 'tv' && tmdbType != 'movie') {
+      throw ArgumentError.value(tmdbType, 'tmdbType');
+    }
+    final idColumn = tmdbType == 'tv' ? 'tmdb_tv_id' : 'tmdb_movie_id';
+    final artworkKey = 'tmdb_${tmdbType}_artwork';
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query('cloud_media_work',
+          where: 'source_id = ? AND work_key = ? AND $idColumn = ?',
+          whereArgs: [sourceId, workKey, tmdbId]);
+      if (rows.isEmpty) return;
+      Map<String, dynamic> metadata;
+      try {
+        metadata = Map<String, dynamic>.from(
+          jsonDecode(rows.single['metadata_json']?.toString() ?? '{}') as Map,
+        );
+      } catch (_) {
+        metadata = {};
+      }
+      metadata['backdrop_url'] = artworkUrl;
+      metadata[artworkKey] = {
+        'version': 1,
+        'backdrop_url': artworkUrl,
+      };
+      await txn.update(
+        'cloud_media_work',
+        {
+          'metadata_json': jsonEncode(metadata),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        where: 'source_id = ? AND work_key = ? AND $idColumn = ?',
+        whereArgs: [sourceId, workKey, tmdbId],
+      );
+    });
+  }
+
   Future<List<Map<String, Object?>>> getWorks({String? sourceId}) async {
     final db = await database;
-    return db.query(
+    final rows = (await db.query(
       'cloud_media_work',
       where: sourceId == null ? null : 'source_id = ?',
       whereArgs: sourceId == null ? null : [sourceId],
       orderBy: 'title_cn COLLATE NOCASE, title COLLATE NOCASE',
+    ))
+        .map((row) => Map<String, Object?>.from(row))
+        .toList();
+    for (final row in rows) {
+      final overview = row['overview']?.toString();
+      final cleaned = AnimeTextSanitizer.cleanSummary(overview);
+      if (cleaned != overview) row['overview'] = cleaned;
+    }
+    return rows;
+  }
+
+  /// Removes provider translation credits from indexes created by older
+  /// versions. The display reader also sanitizes, so this repair can wait for
+  /// the next catalog load or scan without exposing the credit in the UI.
+  Future<int> repairProviderTranslationCredits({String? sourceId}) async {
+    final db = await database;
+    final rows = await db.query(
+      'cloud_media_work',
+      columns: ['source_id', 'work_key', 'overview'],
+      where: sourceId == null ? null : 'source_id = ?',
+      whereArgs: sourceId == null ? null : [sourceId],
     );
+    var repaired = 0;
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final overview = row['overview']?.toString();
+        final cleaned = AnimeTextSanitizer.cleanSummary(overview);
+        if (cleaned == overview) continue;
+        await txn.update(
+          'cloud_media_work',
+          {
+            'overview': cleaned,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          },
+          where: 'source_id = ? AND work_key = ?',
+          whereArgs: [row['source_id'], row['work_key']],
+        );
+        repaired++;
+      }
+    });
+    return repaired;
   }
 
   Future<void> updateWorkPoster({

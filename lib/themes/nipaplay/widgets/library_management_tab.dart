@@ -1850,7 +1850,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     if (tooltip.contains('权限') || tooltip.contains('安全')) {
       return cupertino.CupertinoIcons.lock_shield;
     }
-    if (tooltip.contains('路径') || tooltip.contains('文件夹')) {
+    if (tooltip.contains('路径') ||
+        tooltip.contains('文件夹') ||
+        tooltip.contains('目录')) {
       return cupertino.CupertinoIcons.folder;
     }
     return cupertino.CupertinoIcons.ellipsis;
@@ -1868,9 +1870,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       case LibraryManagementSection.webdav:
         return [
           _buildActionIcon(
-            icon: Icons.query_stats,
-            tooltip: '查看刮削进度',
-            onPressed: () => showCloudMediaScanProgressDialog(context),
+            icon: Icons.folder_special_outlined,
+            tooltip: '管理已刮削目录',
+            onPressed: _showCloudLibraryRoots,
           ),
           _buildActionIcon(
             icon: Icons.folder_delete_outlined,
@@ -2846,47 +2848,14 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   }
 
   List<LocalLibraryActionControl> _buildMountedDirectoryActions() {
-    final actions = <LocalLibraryActionControl>[
-      LocalLibraryActionControl(
-        label: '虚拟根目录',
-        desktopIcon: Icons.home_outlined,
-        phoneIcon: cupertino.CupertinoIcons.home,
-        onPressed: _leaveMountedLibrary,
-      ),
-      LocalLibraryActionControl(
-        label: '上一级',
-        desktopIcon: Icons.arrow_upward,
-        phoneIcon: cupertino.CupertinoIcons.arrow_up,
-        onPressed: _navigateMountedBack,
-      ),
-      LocalLibraryActionControl(
-        label: '刷新',
-        desktopIcon: Icons.refresh,
-        phoneIcon: cupertino.CupertinoIcons.refresh,
-        onPressed: _isMountedDirectoryLoading
-            ? null
-            : () => _loadMountedDirectory(forceRefresh: true),
-      ),
-    ];
+    final actions = <LocalLibraryActionControl>[];
     final location = _mountedLocation;
     if (location?.type == _MountedLibraryType.webdav && !_isRemoteMode) {
       actions.add(LocalLibraryActionControl(
-        label: '扫描云媒体库',
-        desktopIcon: Icons.library_add_check_outlined,
-        phoneIcon: cupertino.CupertinoIcons.cloud_download,
-        onPressed: _isMountedDirectoryLoading ? null : _scanMountedWebDAVRoot,
-      ));
-      actions.add(LocalLibraryActionControl(
-        label: '管理云媒体库',
+        label: '管理已刮削目录',
         desktopIcon: Icons.folder_special_outlined,
         phoneIcon: cupertino.CupertinoIcons.folder,
         onPressed: _showCloudLibraryRoots,
-      ));
-      actions.add(LocalLibraryActionControl(
-        label: '查看云媒体索引',
-        desktopIcon: Icons.video_library_outlined,
-        phoneIcon: cupertino.CupertinoIcons.square_list,
-        onPressed: () => _showCloudMediaIndex(),
       ));
     } else if (location?.type == _MountedLibraryType.local && !_isRemoteMode) {
       actions.add(LocalLibraryActionControl(
@@ -2970,9 +2939,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       );
       if (!mounted) return;
       BlurSnackBar.show(
-          context,
-          '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
-          '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容');
+        context,
+        result.inventoryChanged
+            ? '已索引 ${result.assets.length} 个文件，更新 ${result.matchedWorks} 部作品'
+                '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容'
+            : '文件清单未变化，沿用 ${result.reusedWorks} 部作品资料；未读取视频内容',
+      );
       await _showCloudMediaIndex(libraryId: result.libraryId);
     } catch (error) {
       if (mounted) BlurSnackBar.show(context, '云媒体库扫描失败：$error');
@@ -3189,7 +3161,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                                             context,
                                             isLocalSource
                                                 ? '本地媒体目录不可用'
-                                                : '请先在“管理云媒体库”中映射此媒体来源',
+                                                : '请先在“管理已刮削目录”中映射此媒体来源',
                                           );
                                         }
                                         return;
@@ -3273,162 +3245,364 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   }
 
   Future<void> _showCloudLibraryRoots() async {
-    final connection = _mountedLocation?.webdavConnection;
-    if (connection == null) return;
+    final mountedConnection = _mountedLocation?.webdavConnection;
+    final mountedPath = mountedConnection == null ? null : _currentMountedPath;
     final database = CloudMediaIndexDatabase.instance;
     final roots = (await database.getLibraryRoots())
         .where((root) =>
             !(root['connection_id']?.toString().startsWith('local:') ?? false))
+        .map((root) => Map<String, Object?>.from(root))
         .toList();
     if (!mounted) return;
     await showInViewDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('已添加的云媒体库目录'),
-          content: SizedBox(
-            width: 650,
-            height: 460,
-            child: roots.isEmpty
-                ? const Center(
-                    child: Text('还没有扫描过媒体库目录。浏览到目标文件夹后点击“扫描云媒体库”。'),
-                  )
-                : ListView.separated(
-                    itemCount: roots.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final root = roots[index];
-                      final id = root['id']?.toString() ?? '';
-                      final rootPath = root['root_path']?.toString() ?? '/';
-                      final mappedConnectionId =
-                          root['connection_id']?.toString() ?? '';
-                      final isMapped = mappedConnectionId == connection.id &&
-                          rootPath.isNotEmpty;
-                      final scanned = root['last_scanned_at']?.toString();
-                      return ListTile(
-                        leading: const Icon(Icons.folder_open_outlined),
-                        title: Text(root['name']?.toString() ?? rootPath),
-                        subtitle: Text(
-                          '${isMapped ? rootPath : '此设备尚未映射媒体来源'}${scanned == null ? ' · 尚未完成扫描' : ' · 最近扫描 ${DateTime.tryParse(scanned)?.toLocal().toString().substring(0, 16) ?? scanned}'}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () {
-                          Navigator.of(dialogContext).pop();
-                          _showCloudMediaIndex(libraryId: id);
-                        },
-                        trailing: Wrap(
-                          spacing: 0,
-                          children: [
-                            IconButton(
-                              tooltip: '映射到当前 WebDAV 目录 $_currentMountedPath',
-                              icon: Icon(isMapped
-                                  ? Icons.link
-                                  : Icons.link_off_outlined),
-                              onPressed: () async {
-                                final confirmed = await showInViewDialog<bool>(
-                                  context: dialogContext,
-                                  builder: (confirmContext) => AlertDialog(
-                                    title: const Text('映射媒体来源'),
-                                    content: Text(
-                                      '将“${root['name']}”映射到本机连接“${connection.name}”的目录 $_currentMountedPath。此映射只保存在本机。',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(
-                                            confirmContext, false),
-                                        child: const Text('取消'),
-                                      ),
-                                      FilledButton(
-                                        onPressed: () =>
-                                            Navigator.pop(confirmContext, true),
-                                        child: const Text('映射'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed != true ||
-                                    !dialogContext.mounted) {
-                                  return;
-                                }
-                                await database.mapLibraryRoot(
-                                  libraryId: id,
-                                  connectionId: connection.id,
-                                  rootPath: _currentMountedPath,
-                                );
-                                setDialogState(() {
-                                  root['connection_id'] = connection.id;
-                                  root['root_path'] = _currentMountedPath;
-                                });
-                              },
-                            ),
-                            IconButton(
-                              tooltip: '重新扫描并刮削',
-                              icon: const Icon(Icons.refresh),
-                              onPressed: _isMountedDirectoryLoading || !isMapped
-                                  ? null
-                                  : () async {
-                                      Navigator.of(dialogContext).pop();
-                                      await _scanRegisteredCloudRoot(
-                                        connection,
-                                        root,
-                                      );
-                                    },
-                            ),
-                            IconButton(
-                              tooltip: '删除本地索引',
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () async {
-                                final confirmed = await showInViewDialog<bool>(
-                                  context: dialogContext,
-                                  builder: (confirmContext) => AlertDialog(
-                                    title: const Text('删除媒体库索引？'),
-                                    content: Text(
-                                      '将移除此设备上的“${root['name']}”索引、作品资料和人工关联记录。云盘原文件不会被修改或删除。',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(
-                                          confirmContext,
-                                          false,
-                                        ),
-                                        child: const Text('取消'),
-                                      ),
-                                      FilledButton.tonal(
-                                        onPressed: () => Navigator.pop(
-                                          confirmContext,
-                                          true,
-                                        ),
-                                        child: const Text('删除索引'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                                if (confirmed != true ||
-                                    !dialogContext.mounted) {
-                                  return;
-                                }
-                                await database.deleteLibraryRoot(id);
-                                unawaited(AutoSyncService.instance
-                                    .scheduleSyncAfterCatalogChange());
-                                if (!dialogContext.mounted) return;
-                                setDialogState(() => roots.removeAt(index));
-                              },
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+      builder: (dialogContext) {
+        var query = '';
+        var deleting = false;
+        final selected = <String>{};
+
+        WebDAVConnection? mappedConnection(Map<String, Object?> root) {
+          final id = root['connection_id']?.toString() ?? '';
+          return id.isEmpty
+              ? null
+              : WebDAVService.instance.getConnectionByIdOrName(id);
+        }
+
+        List<Map<String, Object?>> filteredRoots() {
+          final needle = query.trim().toLowerCase();
+          if (needle.isEmpty) return roots;
+          return roots.where((root) {
+            final text = [
+              root['name'],
+              root['root_path'],
+              root['connection_id'],
+            ].join(' ').toLowerCase();
+            return text.contains(needle);
+          }).toList(growable: false);
+        }
+
+        Future<bool> confirmRemoval(
+          BuildContext confirmContext,
+          List<Map<String, Object?>> targets,
+        ) async {
+          return await showInViewDialog<bool>(
+                context: confirmContext,
+                builder: (nestedContext) => AlertDialog(
+                  title: Text(targets.length == 1
+                      ? '删除媒体库索引？'
+                      : '删除 ${targets.length} 个媒体库索引？'),
+                  content: Text(
+                    targets.length == 1
+                        ? '将移除此设备上的“${targets.single['name']}”索引、作品资料和人工关联记录。云盘原文件不会被修改或删除。'
+                        : '将移除此设备上的 ${targets.length} 个目录索引、作品资料和人工关联记录。云盘原文件不会被修改或删除。',
                   ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
-        ),
-      ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(nestedContext, false),
+                      child: const Text('取消'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.pop(nestedContext, true),
+                      child: const Text('删除索引'),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+        }
+
+        Future<void> removeRoots(
+          StateSetter setDialogState,
+          List<Map<String, Object?>> targets,
+        ) async {
+          if (targets.isEmpty ||
+              !await confirmRemoval(dialogContext, targets) ||
+              !dialogContext.mounted) {
+            return;
+          }
+          setDialogState(() => deleting = true);
+          for (final root in targets) {
+            await database.deleteLibraryRoot(root['id']?.toString() ?? '');
+          }
+          unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+          if (!dialogContext.mounted) return;
+          setDialogState(() {
+            final removed =
+                targets.map((root) => root['id']?.toString()).toSet();
+            roots.removeWhere(
+                (root) => removed.contains(root['id']?.toString()));
+            selected.removeAll(removed);
+            deleting = false;
+          });
+        }
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final shown = filteredRoots();
+            final shownIds = shown
+                .map((root) => root['id']?.toString() ?? '')
+                .where((id) => id.isNotEmpty)
+                .toSet();
+            final selectedShown = shownIds.where(selected.contains).length;
+            final allShownSelected =
+                shownIds.isNotEmpty && selectedShown == shownIds.length;
+            final someShownSelected = selectedShown > 0 && !allShownSelected;
+            return AlertDialog(
+              title: Text('管理已刮削目录（${roots.length}）'),
+              content: SizedBox(
+                width:
+                    MediaQuery.sizeOf(dialogContext).width.clamp(300.0, 760.0),
+                height: MediaQuery.sizeOf(dialogContext).height * .7,
+                child: Column(
+                  children: [
+                    TextField(
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search),
+                        hintText: '搜索名称、路径或媒体来源',
+                      ),
+                      onChanged: (value) => setDialogState(() => query = value),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Checkbox(
+                          tristate: true,
+                          value: allShownSelected
+                              ? true
+                              : someShownSelected
+                                  ? null
+                                  : false,
+                          onChanged: deleting
+                              ? null
+                              : (_) {
+                                  setDialogState(() {
+                                    if (allShownSelected) {
+                                      selected.removeAll(shownIds);
+                                    } else {
+                                      selected.addAll(shownIds);
+                                    }
+                                  });
+                                },
+                        ),
+                        Expanded(
+                          child: Text(
+                            selected.isEmpty
+                                ? '全选当前结果'
+                                : '已选择 ${selected.length} 个目录',
+                          ),
+                        ),
+                        if (selected.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: deleting
+                                ? null
+                                : () => removeRoots(
+                                      setDialogState,
+                                      roots
+                                          .where((root) => selected
+                                              .contains(root['id']?.toString()))
+                                          .toList(growable: false),
+                                    ),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('删除选中'),
+                          ),
+                      ],
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: roots.isEmpty
+                          ? const Center(child: Text('暂无已刮削目录'))
+                          : shown.isEmpty
+                              ? const Center(child: Text('没有匹配的已刮削目录'))
+                              : ListView.separated(
+                                  itemCount: shown.length,
+                                  separatorBuilder: (_, __) =>
+                                      const Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final root = shown[index];
+                                    final id = root['id']?.toString() ?? '';
+                                    final rootPath =
+                                        root['root_path']?.toString() ?? '/';
+                                    final connection = mappedConnection(root);
+                                    final isMapped = connection != null;
+                                    final canRemap =
+                                        mountedConnection != null &&
+                                            mountedPath != null;
+                                    final scanned =
+                                        root['last_scanned_at']?.toString();
+                                    final scannedLabel = scanned == null
+                                        ? '尚未完成扫描'
+                                        : '最近扫描 ${DateTime.tryParse(scanned)?.toLocal().toString().substring(0, 16) ?? scanned}';
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        ListTile(
+                                          leading: Checkbox(
+                                            value: selected.contains(id),
+                                            onChanged: deleting
+                                                ? null
+                                                : (checked) {
+                                                    setDialogState(() {
+                                                      if (checked == true) {
+                                                        selected.add(id);
+                                                      } else {
+                                                        selected.remove(id);
+                                                      }
+                                                    });
+                                                  },
+                                          ),
+                                          title: Text(
+                                            root['name']?.toString() ??
+                                                rootPath,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          subtitle: Text(
+                                            '${isMapped ? '$rootPath · ${connection.name}' : '此设备尚未映射媒体来源'} · $scannedLabel',
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          onTap: deleting
+                                              ? null
+                                              : () => setDialogState(() {
+                                                    if (selected.contains(id)) {
+                                                      selected.remove(id);
+                                                    } else {
+                                                      selected.add(id);
+                                                    }
+                                                  }),
+                                        ),
+                                        Wrap(
+                                          spacing: 0,
+                                          children: [
+                                            TextButton.icon(
+                                              label: const Text('打开索引'),
+                                              icon: const Icon(
+                                                  Icons.video_library_outlined),
+                                              onPressed: deleting
+                                                  ? null
+                                                  : () async {
+                                                      Navigator.of(
+                                                              dialogContext)
+                                                          .pop();
+                                                      await _showCloudMediaIndex(
+                                                          libraryId: id);
+                                                    },
+                                            ),
+                                            if (canRemap)
+                                              TextButton.icon(
+                                                label: const Text('映射到此目录'),
+                                                icon: Icon(connection?.id ==
+                                                        mountedConnection.id
+                                                    ? Icons.link
+                                                    : Icons.link_off_outlined),
+                                                onPressed: deleting
+                                                    ? null
+                                                    : () async {
+                                                        final confirmed =
+                                                            await showInViewDialog<
+                                                                bool>(
+                                                          context:
+                                                              dialogContext,
+                                                          builder:
+                                                              (confirmContext) =>
+                                                                  AlertDialog(
+                                                            title: const Text(
+                                                                '映射媒体来源'),
+                                                            content: Text(
+                                                              '将“${root['name']}”映射到本机连接“${mountedConnection.name}”的目录 $mountedPath。此映射只保存在本机。',
+                                                            ),
+                                                            actions: [
+                                                              TextButton(
+                                                                onPressed: () =>
+                                                                    Navigator.pop(
+                                                                        confirmContext,
+                                                                        false),
+                                                                child:
+                                                                    const Text(
+                                                                        '取消'),
+                                                              ),
+                                                              FilledButton(
+                                                                onPressed: () =>
+                                                                    Navigator.pop(
+                                                                        confirmContext,
+                                                                        true),
+                                                                child:
+                                                                    const Text(
+                                                                        '映射'),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        );
+                                                        if (confirmed != true ||
+                                                            !dialogContext
+                                                                .mounted) {
+                                                          return;
+                                                        }
+                                                        await database
+                                                            .mapLibraryRoot(
+                                                          libraryId: id,
+                                                          connectionId:
+                                                              mountedConnection
+                                                                  .id,
+                                                          rootPath: mountedPath,
+                                                        );
+                                                        setDialogState(() {
+                                                          root['connection_id'] =
+                                                              mountedConnection
+                                                                  .id;
+                                                          root['root_path'] =
+                                                              mountedPath;
+                                                        });
+                                                      },
+                                              ),
+                                            TextButton.icon(
+                                              label: const Text('重新刮削'),
+                                              icon: const Icon(Icons.refresh),
+                                              onPressed:
+                                                  deleting || connection == null
+                                                      ? null
+                                                      : () async {
+                                                          Navigator.of(
+                                                                  dialogContext)
+                                                              .pop();
+                                                          await _scanRegisteredCloudRoot(
+                                                            connection,
+                                                            root,
+                                                          );
+                                                        },
+                                            ),
+                                            TextButton.icon(
+                                              label: const Text('移除索引'),
+                                              icon: const Icon(
+                                                  Icons.delete_outline),
+                                              onPressed: deleting
+                                                  ? null
+                                                  : () => removeRoots(
+                                                        setDialogState,
+                                                        [root],
+                                                      ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('关闭'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -3455,7 +3629,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       if (!mounted) return;
       BlurSnackBar.show(
         context,
-        '已刷新 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品；未读取视频内容',
+        result.inventoryChanged
+            ? '已刷新 ${result.assets.length} 个文件，更新 ${result.matchedWorks} 部作品；未读取视频内容'
+            : '文件清单未变化，沿用 ${result.reusedWorks} 部作品资料；未读取视频内容',
       );
       await _showCloudMediaIndex(libraryId: result.libraryId);
     } catch (error) {
@@ -4016,8 +4192,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         if (!mounted) return;
         BlurSnackBar.show(
           context,
-          '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
-          '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容',
+          result.inventoryChanged
+              ? '已索引 ${result.assets.length} 个文件，更新 ${result.matchedWorks} 部作品'
+                  '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；未读取视频内容'
+              : '文件清单未变化，沿用 ${result.reusedWorks} 部作品资料；未读取视频内容',
         );
         await _showCloudMediaIndex(libraryId: result.libraryId);
       } catch (error) {
@@ -4049,7 +4227,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
         if (mounted) {
           BlurSnackBar.show(
             context,
-            '已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品',
+            result.inventoryChanged
+                ? '已索引 ${result.assets.length} 个文件，更新 ${result.matchedWorks} 部作品'
+                : '文件清单未变化，沿用 ${result.reusedWorks} 部作品资料',
           );
           await _showCloudMediaIndex(libraryId: result.libraryId);
         }
@@ -4190,9 +4370,9 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       case LibraryManagementSection.webdav:
         return [
           NipaplayLargeScreenActionButton(
-            icon: Icons.query_stats,
-            label: '刮削进度',
-            onPressed: () => showCloudMediaScanProgressDialog(context),
+            icon: Icons.folder_special_outlined,
+            label: '管理目录',
+            onPressed: _showCloudLibraryRoots,
           ),
           const SizedBox(width: 10),
           NipaplayLargeScreenActionButton(
@@ -6751,9 +6931,10 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
               rootPath: folderPath,
             );
             if (!mounted) return;
-            final summary =
-                'TMDB-ID 模式已索引 ${result.assets.length} 个文件，匹配 ${result.matchedWorks} 部作品'
-                '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；视频内容读取 0 次';
+            final summary = result.inventoryChanged
+                ? 'TMDB-ID 模式已索引 ${result.assets.length} 个文件，更新 ${result.matchedWorks} 部作品'
+                    '${result.failedWorks == 0 ? '' : '，${result.failedWorks} 部待确认'}；视频内容读取 0 次'
+                : '文件清单未变化，沿用 ${result.reusedWorks} 部作品资料；视频内容读取 0 次';
             _finishRemoteScrape(summary);
             BlurSnackBar.show(context, summary);
             await _showCloudMediaIndex(libraryId: result.libraryId);

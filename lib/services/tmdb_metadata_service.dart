@@ -17,6 +17,7 @@ class TmdbMetadataService {
         _tokenReader = tokenReader ?? _readStoredToken;
 
   static const _tokenKey = 'cloud_media_tmdb_read_access_token';
+  static const _specialMappingVersion = 3;
   static const _storage = FlutterSecureStorage();
   static Future<bool>? _hasTokenCache;
   final http.Client _client;
@@ -131,8 +132,9 @@ class TmdbMetadataService {
     return false;
   }
 
-  /// Loads only seasons represented by playable episodes. Failed requests are
-  /// not cached, so opening the detail again can retry without a library scan.
+  /// Loads seasons represented by playable episodes and TMDB specials when
+  /// OVA/OAD/SP files exist. Failed requests are not cached, so opening the
+  /// detail again can retry without a library scan.
   Future<Map<String, dynamic>> loadEpisodeSeasons({
     required String sourceId,
     required Map<String, Object?> work,
@@ -165,16 +167,63 @@ class TmdbMetadataService {
         }
       } catch (_) {/* A malformed cache can be fetched again. */}
     }
-    final needed = assets
-        .where((a) =>
-            CloudMediaAssetPresentation.category(a) == 'episode' &&
-            a['episode_number'] != null)
-        .map(CloudMediaAssetPresentation.seasonNumber)
-        .toSet()
-        .where((s) => !seasons.containsKey('$s'));
-    if (needed.isEmpty) return seasons;
+    final specialAssets = assets
+        .where(CloudMediaAssetPresentation.isSpecialMappingCandidate)
+        .toList(growable: false);
+    final previousSpecialMapping = seasons.containsKey('special_assets')
+        ? jsonEncode(seasons['special_assets'])
+        : null;
+
+    void attachSpecialMapping() {
+      if (specialAssets.isEmpty || seasons['0'] is! List) return;
+      final specials = (seasons['0'] as List)
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList(growable: false);
+      seasons['special_assets'] =
+          CloudMediaAssetPresentation.mapSpecialEpisodes(
+        assets: assets,
+        specials: specials,
+        yearHint: work['work_key']?.toString(),
+      );
+    }
+
+    attachSpecialMapping();
+    final currentSpecialMapping = seasons.containsKey('special_assets')
+        ? jsonEncode(seasons['special_assets'])
+        : null;
+    final mappingNeedsCache = currentSpecialMapping != null &&
+        currentSpecialMapping != previousSpecialMapping;
+    final needed = <int>{
+      ...assets
+          .where((a) =>
+              CloudMediaAssetPresentation.category(a) == 'episode' &&
+              a['episode_number'] != null)
+          .map((asset) => CloudMediaAssetPresentation.seasonNumber({
+                'work_key': work['work_key'],
+                'work_title': work['title_cn'] ?? work['title'],
+                ...asset,
+              }))
+          .where((s) => !seasons.containsKey('$s')),
+      if (specialAssets.isNotEmpty && !seasons.containsKey('0')) 0,
+      if (specialAssets.isNotEmpty &&
+          seasons['special_mapping_version'] != _specialMappingVersion)
+        0,
+    };
     final token = (await _tokenReader())?.trim();
-    if (token == null || token.isEmpty) return seasons;
+    if (needed.isEmpty || token == null || token.isEmpty) {
+      if (mappingNeedsCache) {
+        await CloudMediaIndexDatabase.instance.cacheTmdbEpisodeSeasons(
+          sourceId: sourceId,
+          workKey: work['work_key']?.toString() ?? '.',
+          tmdbId: id,
+          seasons: {
+            'special_assets': seasons['special_assets'],
+          },
+        );
+      }
+      return seasons;
+    }
     final apiKey = RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token);
     final fetched = <String, dynamic>{};
     for (final season in needed) {
@@ -202,6 +251,7 @@ class TmdbMetadataService {
                   'episode_number': e['episode_number'],
                   'name': e['name'],
                   'still_path': e['still_path'],
+                  'air_date': e['air_date'],
                 })
             .toList();
       } catch (_) {
@@ -209,6 +259,13 @@ class TmdbMetadataService {
       }
     }
     seasons.addAll(fetched);
+    attachSpecialMapping();
+    if (specialAssets.isNotEmpty && fetched.containsKey('0')) {
+      fetched['special_mapping_version'] = _specialMappingVersion;
+    }
+    if (specialAssets.isNotEmpty && seasons.containsKey('special_assets')) {
+      fetched['special_assets'] = seasons['special_assets'];
+    }
     if (fetched.isNotEmpty) {
       await CloudMediaIndexDatabase.instance.cacheTmdbEpisodeSeasons(
         sourceId: sourceId,
@@ -218,6 +275,93 @@ class TmdbMetadataService {
       );
     }
     return seasons;
+  }
+
+  /// Returns a landscape image for a movie or TV work. The images endpoint
+  /// supplies both movie thumbnails and the wide artwork used by the detail
+  /// page background. Only the URL is cached.
+  Future<String?> loadWorkArtwork({
+    required String sourceId,
+    required Map<String, Object?> work,
+  }) async {
+    final movieId = int.tryParse('${work['tmdb_movie_id'] ?? ''}');
+    final tvId = int.tryParse('${work['tmdb_tv_id'] ?? ''}');
+    final tmdbType = tvId != null
+        ? 'tv'
+        : movieId != null
+            ? 'movie'
+            : work['tmdb_type']?.toString();
+    final id = tvId ??
+        movieId ??
+        int.tryParse(
+          '${work['tmdb_id'] ?? ''}',
+        );
+    if (id == null || (tmdbType != 'tv' && tmdbType != 'movie')) return null;
+
+    Map<String, dynamic> metadata = {};
+    try {
+      final decoded = jsonDecode(work['metadata_json']?.toString() ?? '{}');
+      if (decoded is Map) metadata = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    final cached = metadata['tmdb_${tmdbType}_artwork'];
+    if (cached is Map) {
+      final url = cached['backdrop_url']?.toString().trim();
+      if (cached['version'] == 1 && url?.isNotEmpty == true) return url;
+    }
+    final cachedBackdrop = metadata['backdrop_url']?.toString().trim();
+    if (cachedBackdrop?.isNotEmpty == true) return cachedBackdrop;
+    final path = metadata['backdrop_path']?.toString().trim();
+    if (path?.isNotEmpty == true) {
+      return 'https://image.tmdb.org/t/p/w780$path';
+    }
+
+    final token = (await _tokenReader())?.trim();
+    if (token == null || token.isEmpty) return null;
+    final apiKey = RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(token);
+    final response = await _client.get(
+      Uri.https('api.themoviedb.org', '/3/$tmdbType/$id/images', {
+        'include_image_language': 'zh,ja,en,null',
+        if (apiKey) 'api_key': token,
+      }),
+      headers: {
+        'Accept': 'application/json',
+        if (!apiKey) 'Authorization': 'Bearer $token',
+      },
+    ).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) return null;
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map || decoded['backdrops'] is! List) return null;
+    final backdrops = (decoded['backdrops'] as List).whereType<Map>().toList();
+    if (backdrops.isEmpty) return null;
+    backdrops.sort((a, b) {
+      final score = (num.tryParse('${b['vote_average']}') ?? 0)
+          .compareTo(num.tryParse('${a['vote_average']}') ?? 0);
+      if (score != 0) return score;
+      return (num.tryParse('${b['width']}') ?? 0)
+          .compareTo(num.tryParse('${a['width']}') ?? 0);
+    });
+    final artworkPath = backdrops.first['file_path']?.toString().trim();
+    if (artworkPath == null || artworkPath.isEmpty) return null;
+    final url = 'https://image.tmdb.org/t/p/w780$artworkPath';
+    await CloudMediaIndexDatabase.instance.cacheTmdbWorkArtwork(
+      sourceId: sourceId,
+      workKey: work['work_key']?.toString() ?? '.',
+      tmdbId: id,
+      tmdbType: tmdbType!,
+      artworkUrl: url,
+    );
+    return url;
+  }
+
+  /// Backwards-compatible movie-only wrapper.
+  Future<String?> loadMovieArtwork({
+    required String sourceId,
+    required Map<String, Object?> work,
+  }) async {
+    if (work['tmdb_movie_id'] == null && work['tmdb_type'] != 'movie') {
+      return null;
+    }
+    return loadWorkArtwork(sourceId: sourceId, work: work);
   }
 
   void close() => _client.close();

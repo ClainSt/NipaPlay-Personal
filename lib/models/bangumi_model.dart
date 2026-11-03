@@ -1,35 +1,49 @@
+import 'package:nipaplay/utils/anime_text_sanitizer.dart';
+
 class BangumiAnime {
   final int id; // Corresponds to Dandanplay's animeId
   final String name; // Corresponds to Dandanplay's animeTitle, primary name
-  final String nameCn; // Potentially from Dandanplay's titles array or use animeTitle if only one
+  final String
+      nameCn; // Potentially from Dandanplay's titles array or use animeTitle if only one
   final String imageUrl;
+
   /// 用户为媒体详情页单独指定的背景图；为空时继续使用 [imageUrl] 海报。
   final String? backgroundImageUrl;
   final String? summary;
-  final String? airDate; // Dandanplay's BangumiQueueIntroV2 provides airDate, BangumiDetails might have more specific first episode air date
-  final int? airWeekday; // Corresponds to Dandanplay's airDay (0 for Sun, 1-6 for Mon-Sat)
+  final String?
+      airDate; // Dandanplay's BangumiQueueIntroV2 provides airDate, BangumiDetails might have more specific first episode air date
+  final int?
+      airWeekday; // Corresponds to Dandanplay's airDay (0 for Sun, 1-6 for Mon-Sat)
   final double? rating; // Dandanplay's rating (0-10)
   final Map<String, dynamic>? ratingDetails;
-  final List<String>? tags; // From Dandanplay's tags array (BangumiTag object needs name extraction)
+  final List<String>?
+      tags; // From Dandanplay's tags array (BangumiTag object needs name extraction)
   final List<String>? metadata; // Store Dandanplay's metadata string array
   final bool? isNSFW; // Corresponds to Dandanplay's isRestricted
-  final String? platform; // No direct equivalent in Dandanplay Intro/Details for this specific field name
-  final int? totalEpisodes; // From Dandanplay's episodes array count in BangumiDetails
+  final String?
+      platform; // No direct equivalent in Dandanplay Intro/Details for this specific field name
+  final int?
+      totalEpisodes; // From Dandanplay's episodes array count in BangumiDetails
   final String? typeDescription; // From Dandanplay's typeDescription
   final String? bangumiUrl;
 
   // Dandanplay specific fields we might want to use:
   final bool? isOnAir;
   final bool? isFavorited; // User-specific, from Dandanplay
-  final List<Map<String, String>>? titles; // Store Dandanplay's titles array [{'title': 'name', 'language': 'lang'}]
+  final List<Map<String, String>>?
+      titles; // Store Dandanplay's titles array [{'title': 'name', 'language': 'lang'}]
   final String? searchKeyword;
 
-  final List<EpisodeData>? episodeList; // Changed from 'episodes' to 'episodeList' to avoid conflict if 'episodes' is a field name in JSON for BangumiDetails itself.
-  
+  final List<EpisodeData>?
+      episodeList; // Changed from 'episodes' to 'episodeList' to avoid conflict if 'episodes' is a field name in JSON for BangumiDetails itself.
+
   // 新增字段：存储番剧信息的语言类型
   final String? language; // 'zh' for简体中文, 'zh_Hant' for繁体中文
 
-  bool get hasDetails => summary != null && (rating != null || ratingDetails != null) && (tags != null || metadata != null);
+  bool get hasDetails =>
+      summary != null &&
+      (rating != null || ratingDetails != null) &&
+      (tags != null || metadata != null);
 
   BangumiAnime({
     required this.id,
@@ -123,9 +137,13 @@ class BangumiAnime {
     return BangumiAnime(
       id: json['animeId'] as int? ?? 0,
       name: json['animeTitle'] as String? ?? '',
-      nameCn: json['animeTitle'] as String? ?? '', // Default to animeTitle, can be refined if 'titles' are available in intro
-      imageUrl: imgUrl ?? 'assets/backempty.png', // Provide a default placeholder
-      airWeekday: json['airDay'] != null ? int.tryParse(json['airDay'].toString()) : null, // 0 for Sun, 1-6 for Mon-Sat
+      nameCn: json['animeTitle'] as String? ??
+          '', // Default to animeTitle, can be refined if 'titles' are available in intro
+      imageUrl:
+          imgUrl ?? 'assets/backempty.png', // Provide a default placeholder
+      airWeekday: json['airDay'] != null
+          ? int.tryParse(json['airDay'].toString())
+          : null, // 0 for Sun, 1-6 for Mon-Sat
       rating: (json['rating'] as num?)?.toDouble(),
       isOnAir: json['isOnAir'] as bool?,
       isFavorited: json['isFavorited'] as bool?,
@@ -133,7 +151,8 @@ class BangumiAnime {
       searchKeyword: json['searchKeyword'] as String?,
       // Fields not in BangumiIntro, will be null or default:
       summary: null,
-      airDate: null, // airDate in BangumiQueueIntroV2, not directly in BangumiIntro for shin bangumi list
+      airDate:
+          null, // airDate in BangumiQueueIntroV2, not directly in BangumiIntro for shin bangumi list
       tags: null,
       metadata: null,
       platform: null,
@@ -158,25 +177,31 @@ class BangumiAnime {
     List<String> parseTags(List<dynamic>? tagsData) {
       if (tagsData == null) return [];
       return tagsData
-          .map((tag) => (tag is Map && tag['name'] != null) ? tag['name'] as String : null)
-          .where((name) => name != null)
-          .cast<String>()
+          .map((tag) {
+            if (tag is Map) return tag['name']?.toString().trim();
+            return tag?.toString().trim();
+          })
+          .whereType<String>()
+          .where((name) => name.isNotEmpty)
           .toList();
     }
-    
+
     String primaryTitle = json['animeTitle'] as String? ?? '';
     String chineseTitle = primaryTitle; // Default
 
     List<Map<String, String>> parsedTitles = [];
     if (json['titles'] != null && json['titles'] is List) {
       for (var titleEntry in json['titles']) {
-        if (titleEntry is Map && titleEntry['title'] != null && titleEntry['language'] != null) {
+        if (titleEntry is Map &&
+            titleEntry['title'] != null &&
+            titleEntry['language'] != null) {
           parsedTitles.add({
             'title': titleEntry['title'] as String,
             'language': titleEntry['language'] as String,
           });
           // Attempt to find a Chinese title
-          if ((titleEntry['language'] as String).toLowerCase().contains('zh') || (titleEntry['language'] as String).toLowerCase().contains('cn')) {
+          if ((titleEntry['language'] as String).toLowerCase().contains('zh') ||
+              (titleEntry['language'] as String).toLowerCase().contains('cn')) {
             chineseTitle = titleEntry['title'] as String;
           }
         }
@@ -186,10 +211,10 @@ class BangumiAnime {
       }
     }
 
-
     List<String>? parsedMetadata;
     if (json['metadata'] != null && json['metadata'] is List) {
-      parsedMetadata = (json['metadata'] as List).map((item) => item.toString()).toList();
+      parsedMetadata =
+          (json['metadata'] as List).map((item) => item.toString()).toList();
     }
 
     List<EpisodeData>? parsedEpisodeList;
@@ -213,7 +238,8 @@ class BangumiAnime {
             ));
           }
           // 处理新格式（与API格式相同）
-          else if (epJson.containsKey('episodeId') && epJson.containsKey('episodeTitle')) {
+          else if (epJson.containsKey('episodeId') &&
+              epJson.containsKey('episodeTitle')) {
             parsedEpisodeList.add(EpisodeData(
               id: epJson['episodeId'] as int? ?? 0,
               title: epJson['episodeTitle'] as String? ?? '未知剧集',
@@ -224,7 +250,8 @@ class BangumiAnime {
       }
     }
 
-    Map<String, dynamic>? rawRatingDetails = json['ratingDetails'] as Map<String, dynamic>?;
+    Map<String, dynamic>? rawRatingDetails =
+        json['ratingDetails'] as Map<String, dynamic>?;
     String? bangumiUrlValue = json['bangumiUrl'] as String?;
 
     // 检查是否存在totalEpisodes信息
@@ -239,14 +266,19 @@ class BangumiAnime {
       name: primaryTitle,
       nameCn: chineseTitle,
       imageUrl: json['imageUrl'] as String? ?? 'assets/backempty.png',
-      summary: json['summary'] as String?,
+      summary: AnimeTextSanitizer.cleanSummary(json['summary']?.toString()),
       // 尝试从多个可能的来源获取首播日期
-      airDate: json['air_date'] as String? ?? json['airDate'] as String? ??
-              ((parsedEpisodeList != null && parsedEpisodeList.isNotEmpty && parsedEpisodeList[0].airDate != null) 
-                ? parsedEpisodeList[0].airDate
-                : ((json['episodes'] != null && (json['episodes'] as List).isNotEmpty && json['episodes'][0]['airDate'] != null)
-                    ? json['episodes'][0]['airDate'] as String
-                    : null)),
+      airDate: json['air_date'] as String? ??
+          json['airDate'] as String? ??
+          ((parsedEpisodeList != null &&
+                  parsedEpisodeList.isNotEmpty &&
+                  parsedEpisodeList[0].airDate != null)
+              ? parsedEpisodeList[0].airDate
+              : ((json['episodes'] != null &&
+                      (json['episodes'] as List).isNotEmpty &&
+                      json['episodes'][0]['airDate'] != null)
+                  ? json['episodes'][0]['airDate'] as String
+                  : null)),
       airWeekday: json['airDay'] as int?,
       rating: (json['rating'] as num?)?.toDouble(),
       ratingDetails: rawRatingDetails,
@@ -286,18 +318,24 @@ class BangumiAnime {
       'bangumiUrl': bangumiUrl,
       'isOnAir': isOnAir,
       'isFavorited': isFavorited,
-      'titles': titles?.map((t) => {'title': t['title'], 'language': t['language']}).toList(),
+      'titles': titles
+          ?.map((t) => {'title': t['title'], 'language': t['language']})
+          .toList(),
       'searchKeyword': searchKeyword,
-      'episodeList': episodeList?.map((e) => {
-        'episodeId': e.id, 
-        'episodeTitle': e.title,
-        'airDate': e.airDate
-      }).toList(),
-      'episodes': episodeList?.map((e) => {
-        'episodeId': e.id, 
-        'episodeTitle': e.title,
-        'airDate': e.airDate
-      }).toList(), // 额外保存一份原始格式的数据，确保fromDandanplayDetail能正确解析
+      'episodeList': episodeList
+          ?.map((e) => {
+                'episodeId': e.id,
+                'episodeTitle': e.title,
+                'airDate': e.airDate
+              })
+          .toList(),
+      'episodes': episodeList
+          ?.map((e) => {
+                'episodeId': e.id,
+                'episodeTitle': e.title,
+                'airDate': e.airDate
+              })
+          .toList(), // 额外保存一份原始格式的数据，确保fromDandanplayDetail能正确解析
       'language': language, // 保存番剧信息的语言类型
     };
   }
@@ -335,8 +373,9 @@ class BangumiAnime {
     final resolvedName = name.isNotEmpty
         ? name
         : (fallbackName.isNotEmpty ? fallbackName : nameCnAlt);
-    final resolvedNameCn =
-        nameCn.isNotEmpty ? nameCn : (nameCnAlt.isNotEmpty ? nameCnAlt : resolvedName);
+    final resolvedNameCn = nameCn.isNotEmpty
+        ? nameCn
+        : (nameCnAlt.isNotEmpty ? nameCnAlt : resolvedName);
     final imageUrlRaw = readString(json['imageUrl']);
     final imageUrl =
         imageUrlRaw.isNotEmpty ? imageUrlRaw : 'assets/backempty.png';
@@ -345,13 +384,25 @@ class BangumiAnime {
     final airDate =
         airDateRaw.isNotEmpty ? airDateRaw : readString(json['airDate']);
     final ratingValue = json['rating'];
-    final rating = ratingValue is num ? ratingValue.toDouble() : double.tryParse(ratingValue?.toString() ?? '');
+    final rating = ratingValue is num
+        ? ratingValue.toDouble()
+        : double.tryParse(ratingValue?.toString() ?? '');
     final rawRatingDetails = json['ratingDetails'];
     final ratingDetails = rawRatingDetails is Map<String, dynamic>
         ? rawRatingDetails
-        : (rawRatingDetails is Map ? rawRatingDetails.cast<String, dynamic>() : null);
+        : (rawRatingDetails is Map
+            ? rawRatingDetails.cast<String, dynamic>()
+            : null);
     final rawTags = json['tags'];
-    final tags = rawTags is List ? rawTags.map((tag) => tag.toString()).toList() : null;
+    final tags = rawTags is List
+        ? rawTags
+            .map(
+                (tag) => tag is Map ? tag['name']?.toString() : tag?.toString())
+            .map((tag) => tag?.trim())
+            .whereType<String>()
+            .where((tag) => tag.isNotEmpty)
+            .toList()
+        : null;
     final rawMetadata = json['metadata'];
     final metadata = rawMetadata is List
         ? rawMetadata.map((item) => item.toString()).toList()
@@ -381,7 +432,7 @@ class BangumiAnime {
       imageUrl: imageUrl,
       backgroundImageUrl:
           backgroundImageUrlRaw.isEmpty ? null : backgroundImageUrlRaw,
-      summary: json['summary']?.toString(),
+      summary: AnimeTextSanitizer.cleanSummary(json['summary']?.toString()),
       airDate: airDate.isNotEmpty ? airDate : null,
       airWeekday: readInt(json['airDay'] ?? json['airWeekday']),
       rating: rating,
@@ -398,13 +449,15 @@ class BangumiAnime {
       titles: titles,
       searchKeyword: json['searchKeyword']?.toString(),
       episodeList: parsedEpisodeList,
-      language: json['language']?.toString() ?? 'zh', // 从JSON读取language字段，默认为简体中文
+      language:
+          json['language']?.toString() ?? 'zh', // 从JSON读取language字段，默认为简体中文
     );
   }
 }
 
 class EpisodeData {
-  final int id; // Corresponds to Dandanplay's episodeId in BangumiEpisode schema
+  final int
+      id; // Corresponds to Dandanplay's episodeId in BangumiEpisode schema
   final String title;
   final String? airDate; // From BangumiEpisode schema
 
@@ -419,4 +472,4 @@ class EpisodeData {
       airDate: json['airDate'] as String?,
     );
   }
-} 
+}

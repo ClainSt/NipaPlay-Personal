@@ -23,6 +23,7 @@ class BangumiApiService {
   static const String _tokenKey = 'bangumi_access_token';
   static const String _userInfoKey = 'bangumi_user_info';
   static const String _isLoggedInKey = 'bangumi_logged_in';
+  static final Map<String, Future<String?>> _chineseNameCache = {};
 
   static Future<String> getBaseUrl() async {
     return await NetworkSettings.getBangumiServer();
@@ -783,15 +784,110 @@ class BangumiApiService {
   }
 
   /// Optional character strip for the cloud detail presentation.
-  static Future<List<Map<String, dynamic>>> getPublicSubjectCharacters(int subjectId) async {
+  static Future<List<Map<String, dynamic>>> getPublicSubjectCharacters(
+      int subjectId) async {
     final baseUrl = await getBaseUrl();
     final response = await http.get(
-      WebRemoteAccessService.proxyUri(Uri.parse('$baseUrl/v0/subjects/$subjectId/characters')),
+      WebRemoteAccessService.proxyUri(
+          Uri.parse('$baseUrl/v0/subjects/$subjectId/characters')),
       headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
     ).timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) return [];
     final payload = json.decode(response.body);
-    return payload is List ? payload.whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList() : [];
+    final characters = payload is List
+        ? payload
+            .whereType<Map>()
+            .map((v) => Map<String, dynamic>.from(v))
+            .toList()
+        : <Map<String, dynamic>>[];
+    return sortSubjectCharacters(characters);
+  }
+
+  static Future<String?> getPublicCharacterChineseName(int characterId) {
+    return _loadChineseName('character', characterId, 'characters');
+  }
+
+  static Future<String?> getPublicPersonChineseName(int personId) {
+    return _loadChineseName('person', personId, 'persons');
+  }
+
+  static Future<String?> _loadChineseName(
+    String type,
+    int id,
+    String endpoint,
+  ) {
+    final key = '$type:$id';
+    final cached = _chineseNameCache[key];
+    if (cached != null) return cached;
+    final request = _fetchChineseName(endpoint, id);
+    _chineseNameCache[key] = request;
+    request.then((value) {
+      if (value == null && identical(_chineseNameCache[key], request)) {
+        _chineseNameCache.remove(key);
+      }
+    });
+    return request;
+  }
+
+  static Future<String?> _fetchChineseName(String endpoint, int id) async {
+    try {
+      final baseUrl = await getBaseUrl();
+      final response = await http.get(
+        WebRemoteAccessService.proxyUri(
+          Uri.parse('$baseUrl/v0/$endpoint/$id'),
+        ),
+        headers: {'User-Agent': _userAgent, 'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) return null;
+      final payload = json.decode(response.body);
+      return payload is Map
+          ? extractSimplifiedChineseName(Map<String, dynamic>.from(payload))
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? extractSimplifiedChineseName(Map<String, dynamic> data) {
+    final direct = data['name_cn']?.toString().trim();
+    if (direct?.isNotEmpty == true) return direct;
+    final infobox = data['infobox'];
+    if (infobox is! List) return null;
+    for (final item in infobox.whereType<Map>()) {
+      final key = item['key']?.toString().trim();
+      if (key != '简体中文名' && key != '中文名') continue;
+      final value = item['value'];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+      if (value is List) {
+        for (final entry in value) {
+          final name = entry?.toString().trim();
+          if (name?.isNotEmpty == true) return name;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Bangumi groups principal characters before supporting and guest roles.
+  /// Keep the provider's ordering within a group when no order is supplied.
+  static List<Map<String, dynamic>> sortSubjectCharacters(
+      List<Map<String, dynamic>> characters) {
+    int role(Map<String, dynamic> c) => switch (c['relation']) {
+          '主角' || 1 => 0,
+          '配角' || 2 => 1,
+          '客串' || 3 => 2,
+          _ => 3,
+        };
+    final indexed = characters.asMap().entries.toList();
+    indexed.sort((a, b) {
+      final group = role(a.value).compareTo(role(b.value));
+      if (group != 0) return group;
+      final x = num.tryParse('${a.value['order'] ?? ''}');
+      final y = num.tryParse('${b.value['order'] ?? ''}');
+      if (x != null && y != null && x != y) return x.compareTo(y);
+      return a.key.compareTo(b.key);
+    });
+    return indexed.map((e) => e.value).toList();
   }
 
   /// 获取公开的条目详情，无需用户授权。

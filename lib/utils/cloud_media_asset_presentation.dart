@@ -1,15 +1,73 @@
 /// Filename tokens are used only for matching and short extra labels.
 class CloudMediaAssetPresentation {
+  static const _matchableSpecialTypes = {'OVA', 'OAD', 'SP'};
+  static const _matchableSpecialFamilies = {'OVA', 'SP'};
   static final _extraToken = RegExp(
     r'(^|[^a-z])(NCOPED|NCOP|NCED|MENU|OVA|OAD|PV|CM|SP|MV)(?:[ ._-]?(\d+(?:[ ._-]?[a-z])?))?(?=[^a-z0-9]|$)',
     caseSensitive: false,
   );
 
   static String? extraTitle(Map<String, Object?> asset) {
-    final match = _extraToken.firstMatch(asset['name']?.toString() ?? '');
-    if (match == null) return null;
+    final name = asset['name']?.toString() ?? '';
+    final match = _extraToken.firstMatch(name);
+    if (match == null) {
+      final interview = RegExp(
+              r'(^|[^a-z0-9])(IV)[ ._-]?(\d{1,3})(?=[^a-z0-9]|$)',
+              caseSensitive: false)
+          .firstMatch(name);
+      if (interview != null) return 'IV${interview.group(3)}';
+      // Only accept an isolated release label. Codec/resolution tags must
+      // never become the title of an otherwise unidentified extra.
+      final labels = RegExp(r'\[([a-z]{1,8})[ ._-]?(\d{1,3}[a-z]?)\]',
+              caseSensitive: false)
+          .allMatches(name);
+      for (final label in labels) {
+        final prefix = label.group(1)!.toUpperCase();
+        if (const {
+          'H',
+          'X',
+          'AV',
+          'AVC',
+          'HEVC',
+          'HI',
+          'HI10P',
+          'AAC',
+          'FLAC',
+          'DTS',
+          'AC',
+          'DD',
+          'CH',
+          'PCM',
+          'VP',
+          'CRC',
+          'BD',
+          'BDRIP',
+          'WEB',
+          'WEBRIP',
+          'VOL',
+          'DISC',
+          'DVD'
+        }.contains(prefix)) {
+          continue;
+        }
+        return '$prefix${label.group(2)!.toUpperCase()}';
+      }
+      return null;
+    }
     final number = (match.group(3) ?? '').replaceAll(RegExp(r'[ ._-]'), '');
     return '${match.group(2)}$number'.toUpperCase();
+  }
+
+  static String extraDisplayTitle(Map<String, Object?> asset) {
+    final extracted = extraTitle(asset);
+    if (extracted != null) return extracted;
+    final original = asset['name']?.toString();
+    if (original != null && original.trim().isNotEmpty) return original;
+    final path = asset['relative_path']?.toString().replaceAll('\\', '/');
+    return path
+            ?.split('/')
+            .lastWhere((part) => part.isNotEmpty, orElse: () => '未命名视频') ??
+        '未命名视频';
   }
 
   static String extraType(Map<String, Object?> asset) {
@@ -28,16 +86,57 @@ class CloudMediaAssetPresentation {
   static int seasonNumber(Map<String, Object?> asset) {
     final explicit = int.tryParse('${asset['season_number'] ?? ''}');
     if (explicit != null) return explicit;
-    final path = '${asset['relative_path'] ?? asset['name'] ?? ''}'
-        .replaceAll('\\', '/');
-    final episode =
-        RegExp(r'\bS(\d{1,2})\s*E(?:P)?\s*\d+', caseSensitive: false)
-            .firstMatch(path);
-    if (episode != null) return int.parse(episode.group(1)!);
-    final directory =
-        RegExp(r'(?:^|/)(?:S|Season\s*)(\d{1,2})(?:/|$)', caseSensitive: false)
-            .firstMatch(path);
-    return int.tryParse(directory?.group(1) ?? '') ?? 1;
+    // A relative asset path can omit the selected library root, so retain
+    // the work identity as a fallback. Never infer a season from a bare
+    // number: it may be an episode, release year, or resolution.
+    for (final value in [
+      asset['name'],
+      asset['relative_path'],
+      asset['work_key'],
+      asset['work_title'],
+    ]) {
+      final season = _seasonFromText('$value');
+      if (season != null) return season;
+    }
+    return 1;
+  }
+
+  static int? _seasonFromText(String value) {
+    final text = value.replaceAll('\\', '/');
+    final patterns = [
+      RegExp(r'(?<![a-z0-9])S(\d{1,2})(?=E\d|[^a-z0-9]|$)',
+          caseSensitive: false),
+      RegExp(r'(?<![a-z])Season[ ._-]*(\d{1,2})(?!\d)', caseSensitive: false),
+      RegExp(r'(?<![a-z0-9])(\d{1,2})(?:st|nd|rd|th)[ ._-]+Season\b',
+          caseSensitive: false),
+      RegExp(r'第[ ._-]*([0-9一二三四五六七八九十两]+)[ ._-]*[季期]'),
+    ];
+    for (final pattern in patterns) {
+      final token = pattern.firstMatch(text)?.group(1);
+      if (token == null) continue;
+      final numeric = int.tryParse(token);
+      if (numeric != null) return numeric;
+      const digits = {
+        '一': 1,
+        '二': 2,
+        '两': 2,
+        '三': 3,
+        '四': 4,
+        '五': 5,
+        '六': 6,
+        '七': 7,
+        '八': 8,
+        '九': 9
+      };
+      if (digits.containsKey(token)) return digits[token];
+      final parts = token.split('十');
+      if (parts.length == 2) {
+        final tens = parts.first.isEmpty ? 1 : digits[parts.first];
+        final units = parts.last.isEmpty ? 0 : digits[parts.last];
+        if (tens != null && units != null) return tens * 10 + units;
+      }
+    }
+    return null;
   }
 
   static Map? episode(
@@ -52,4 +151,167 @@ class CloudMediaAssetPresentation {
     }
     return null;
   }
+
+  static String? specialType(Map<String, Object?> asset) {
+    final type = extraType(asset);
+    return _matchableSpecialTypes.contains(type) ? type : null;
+  }
+
+  static bool isSpecialMappingCandidate(Map<String, Object?> asset) {
+    if (category(asset) != 'extra' || specialType(asset) == null) return false;
+    final name = asset['name']?.toString().toLowerCase() ?? '';
+    return !RegExp(r'menu|trailer|preview|teaser|opening|ending|ncop|nced')
+        .hasMatch(name);
+  }
+
+  static int? explicitSpecialNumber(Map<String, Object?> asset) {
+    final name = asset['name']?.toString() ?? '';
+    final patterns = <RegExp>[
+      RegExp(r'\b(?:OVA|OAD|SP)[\s._-]*(\d{1,3})\b', caseSensitive: false),
+      RegExp(r'[\[(](?:OVA|OAD|SP)[\s._-]*(\d{1,3})[\])]',
+          caseSensitive: false),
+      RegExp(r'[\[(]\d+\((?:OVA|OAD|SP)[\s._-]*(\d{1,3})\)[\])]',
+          caseSensitive: false),
+    ];
+    for (final pattern in patterns) {
+      final number = int.tryParse(pattern.firstMatch(name)?.group(1) ?? '');
+      if (number != null && number > 0) return number;
+    }
+    return null;
+  }
+
+  /// Uses the explicit OVA/SP number first, then a stable same-type ordering.
+  /// The computed mapping is stored with the TMDB cache and never renames a
+  /// cloud file.
+  static Map<String, Map<String, dynamic>> mapSpecialEpisodes({
+    required List<Map<String, Object?>> assets,
+    required List<Map<String, dynamic>> specials,
+    String? yearHint,
+  }) {
+    final result = <String, Map<String, dynamic>>{};
+    final claimed = <int>{};
+    final assetsByType = <String, List<Map<String, Object?>>>{};
+    for (final asset in assets.where(isSpecialMappingCandidate)) {
+      assetsByType
+          .putIfAbsent(_specialFamily(specialType(asset)!), () => [])
+          .add(asset);
+    }
+
+    for (final family in _matchableSpecialFamilies) {
+      final typeAssets = assetsByType[family];
+      if (typeAssets == null || typeAssets.isEmpty) continue;
+      var typeSpecials = specials
+          .where((entry) =>
+              _specialFamily(_specialTypeFromTitle(
+                entry['name']?.toString() ?? '',
+              )) ==
+              family)
+          .toList();
+      final year = RegExp(r'(?<!\d)((?:19|20)\d{2})(?!\d)')
+          .firstMatch(yearHint ?? '')
+          ?.group(1);
+      if (year != null) {
+        final yearSpecials = typeSpecials
+            .where((entry) =>
+                entry['air_date']?.toString().startsWith(year) == true)
+            .toList();
+        if (yearSpecials.isNotEmpty) typeSpecials = yearSpecials;
+        final hasExplicitNumbers =
+            typeAssets.any((asset) => explicitSpecialNumber(asset) != null);
+        if (yearSpecials.isEmpty) {
+          if (!hasExplicitNumbers) continue;
+          final explicitTypes = typeAssets
+              .where((asset) => explicitSpecialNumber(asset) != null)
+              .map(specialType)
+              .whereType<String>()
+              .toSet();
+          final sameSubtype = typeSpecials
+              .where((entry) => explicitTypes.contains(
+                  _specialTypeFromTitle(entry['name']?.toString() ?? '')))
+              .toList();
+          if (sameSubtype.isNotEmpty) typeSpecials = sameSubtype;
+        }
+      }
+      if (typeSpecials.isEmpty) continue;
+      typeSpecials.sort(_compareSpecialEpisode);
+      typeAssets.sort((a, b) {
+        final x = explicitSpecialNumber(a) ?? 999999;
+        final y = explicitSpecialNumber(b) ?? 999999;
+        if (x != y) return x.compareTo(y);
+        return '${a['relative_path']}'.compareTo('${b['relative_path']}');
+      });
+
+      var nextIndex = 0;
+      for (final asset in typeAssets) {
+        final explicit = explicitSpecialNumber(asset);
+        var selected = -1;
+        if (explicit != null) {
+          selected = typeSpecials.indexWhere(
+            (entry) =>
+                int.tryParse('${entry['episode_number']}') == explicit &&
+                !claimed.contains(_specialOrder(entry)),
+          );
+        }
+        if (selected < 0) {
+          while (nextIndex < typeSpecials.length &&
+              claimed.contains(_specialOrder(typeSpecials[nextIndex]))) {
+            nextIndex++;
+          }
+          if (nextIndex < typeSpecials.length) selected = nextIndex;
+        }
+        if (selected < 0) continue;
+        final entry = typeSpecials[selected];
+        claimed.add(_specialOrder(entry));
+        result[asset['relative_path']?.toString() ??
+            asset['name']?.toString() ??
+            ''] = entry;
+      }
+    }
+    return result;
+  }
+
+  static Map? specialEpisode(
+    Map<String, Object?> asset,
+    Map<String, dynamic> seasons,
+  ) {
+    if (!isSpecialMappingCandidate(asset)) return null;
+    final key =
+        asset['relative_path']?.toString() ?? asset['name']?.toString() ?? '';
+    final mapped = seasons['special_assets'];
+    if (mapped is Map && mapped[key] is Map) {
+      return Map<String, dynamic>.from(mapped[key] as Map);
+    }
+    final explicit = explicitSpecialNumber(asset);
+    if (explicit == null) return null;
+    final entries = seasons['0'];
+    if (entries is! List) return null;
+    for (final entry in entries.whereType<Map>()) {
+      if (int.tryParse('${entry['episode_number']}') == explicit) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  static String? _specialTypeFromTitle(String value) {
+    final match = RegExp(
+      r'(^|[^a-z])(OVA|OAD|SP)(?=[^a-z]|$)',
+      caseSensitive: false,
+    ).firstMatch(value);
+    return match?.group(2)?.toUpperCase();
+  }
+
+  /// Filename scanners commonly call an OVA what TMDB names an OAD (and vice
+  /// versa). They share the same specials pool, while SP stays independent.
+  static String _specialFamily(String? type) =>
+      type == 'OVA' || type == 'OAD' ? 'OVA' : type ?? '';
+
+  static int _specialOrder(Map<String, dynamic> entry) =>
+      int.tryParse('${entry['episode_number']}') ?? 999999;
+
+  static int _compareSpecialEpisode(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) =>
+      _specialOrder(a).compareTo(_specialOrder(b));
 }

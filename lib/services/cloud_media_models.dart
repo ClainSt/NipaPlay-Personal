@@ -7,6 +7,10 @@ class CloudMediaScanResult {
     this.libraryId,
     this.matchedWorks = 0,
     this.failedWorks = 0,
+    this.inventoryChanged = false,
+    this.addedFiles = 0,
+    this.removedFiles = 0,
+    this.reusedWorks = 0,
   });
 
   final String rootPath;
@@ -14,11 +18,19 @@ class CloudMediaScanResult {
   final String? libraryId;
   final int matchedWorks;
   final int failedWorks;
+  final bool inventoryChanged;
+  final int addedFiles;
+  final int removedFiles;
+  final int reusedWorks;
 
   CloudMediaScanResult copyWith({
     String? libraryId,
     int? matchedWorks,
     int? failedWorks,
+    bool? inventoryChanged,
+    int? addedFiles,
+    int? removedFiles,
+    int? reusedWorks,
   }) =>
       CloudMediaScanResult(
         rootPath: rootPath,
@@ -26,6 +38,10 @@ class CloudMediaScanResult {
         libraryId: libraryId ?? this.libraryId,
         matchedWorks: matchedWorks ?? this.matchedWorks,
         failedWorks: failedWorks ?? this.failedWorks,
+        inventoryChanged: inventoryChanged ?? this.inventoryChanged,
+        addedFiles: addedFiles ?? this.addedFiles,
+        removedFiles: removedFiles ?? this.removedFiles,
+        reusedWorks: reusedWorks ?? this.reusedWorks,
       );
 }
 

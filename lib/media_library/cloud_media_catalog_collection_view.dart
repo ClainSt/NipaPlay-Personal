@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:nipaplay/themes/nipaplay/widgets/library_anime_detail_page.dart';
 import 'package:nipaplay/models/playable_item.dart';
 import 'package:nipaplay/services/playback_service.dart';
@@ -7,6 +9,7 @@ import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/services/cloud_media_index_database.dart';
 import 'package:nipaplay/services/cloud_media_scanner.dart';
 import 'package:nipaplay/services/cloud_media_scan_progress.dart';
+import 'package:nipaplay/services/auto_sync_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
@@ -31,7 +34,6 @@ class _CloudMediaCatalogCollectionViewState
     extends State<CloudMediaCatalogCollectionView> {
   late Future<List<CloudMediaCatalogEntry>> _catalogsFuture;
   int _lastCompletedScanRunId = 0;
-  _CloudWorkCard? _selectedWork;
 
   @override
   void initState() {
@@ -63,6 +65,15 @@ class _CloudMediaCatalogCollectionViewState
     final loader = widget.catalogLoader;
     if (loader != null) return loader();
     final database = CloudMediaIndexDatabase.instance;
+    final repairedSummaries = await database.repairProviderTranslationCredits();
+    if (repairedSummaries > 0) {
+      unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+    }
+    final removedDuplicateRoots =
+        await database.deduplicateEquivalentLibraryRoots();
+    if (removedDuplicateRoots > 0) {
+      unawaited(AutoSyncService.instance.scheduleSyncAfterCatalogChange());
+    }
     final roots = (await database.getLibraryRoots())
         .where((root) =>
             !(root['connection_id']?.toString().startsWith('local:') ?? false))
@@ -112,21 +123,6 @@ class _CloudMediaCatalogCollectionViewState
 
   @override
   Widget build(BuildContext context) {
-    final selected = _selectedWork;
-    if (selected != null) {
-      return LibraryAnimeDetailPage(
-        key: ValueKey(
-            '${selected.catalog.root['id']}/${selected.work['work_key']}'),
-        sourceId: selected.catalog.root['id']?.toString() ?? '',
-        work: selected.work,
-        works: selected.works,
-        pathForAsset: (asset) => _assetPath(selected.catalog, asset),
-        onBack: () => setState(() => _selectedWork = null),
-        onPlay: (asset, restart) => _openAsset(
-            context, selected.catalog, selected.work, asset,
-            restart: restart),
-      );
-    }
     return FutureBuilder<List<CloudMediaCatalogEntry>>(
       future: _catalogsFuture,
       builder: (context, snapshot) {
@@ -288,8 +284,23 @@ class _CloudMediaCatalogCollectionViewState
     Map<String, Object?> work,
     List<Map<String, Object?>> works,
   ) async {
-    setState(() => _selectedWork =
-        _CloudWorkCard(catalog: catalog, work: work, works: works));
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute(
+          builder: (routeContext) => Scaffold(
+                backgroundColor: const Color(0xFF1F1F1F),
+                body: SafeArea(
+                    child: LibraryAnimeDetailPage(
+                  sourceId: catalog.root['id']?.toString() ?? '',
+                  work: work,
+                  works: works,
+                  pathForAsset: (asset) => _assetPath(catalog, asset),
+                  onBack: () => Navigator.of(routeContext).pop(),
+                  onPlay: (asset, restart) => _openAsset(
+                      routeContext, catalog, work, asset,
+                      restart: restart),
+                )),
+              )),
+    );
   }
 
   Future<void> _openAsset(

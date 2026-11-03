@@ -1,6 +1,6 @@
 import 'package:provider/provider.dart';
 import 'package:nipaplay/providers/watch_history_provider.dart';
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +13,8 @@ import 'package:nipaplay/themes/nipaplay/widgets/adaptive_media_detail_action.da
 import 'package:nipaplay/themes/nipaplay/widgets/cached_network_image_widget.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/cloud_media_work_dialog.dart';
 import 'package:nipaplay/utils/app_accent_color.dart';
+import 'package:nipaplay/utils/anime_detail_metadata.dart';
+import 'package:nipaplay/utils/anime_text_sanitizer.dart';
 import 'package:nipaplay/widgets/in_view_dialog.dart';
 
 /// A presentation of the existing cloud catalog. Never scans or writes media relations.
@@ -27,6 +29,7 @@ class LibraryAnimeDetailPage extends StatefulWidget {
     required this.onBack,
     this.assetsLoader,
     this.historyLoader,
+    this.workArtworkLoader,
     this.showAssociationManagement = true,
     this.onManage,
     this.headerActions,
@@ -52,6 +55,7 @@ class LibraryAnimeDetailPage extends StatefulWidget {
   final bool reverseEpisodes;
   final Future<List<Map<String, Object?>>> Function()? assetsLoader;
   final Future<List<WatchHistoryItem>> Function()? historyLoader;
+  final Future<String?> Function()? workArtworkLoader;
   @override
   State<LibraryAnimeDetailPage> createState() => _LibraryAnimeDetailPageState();
 }
@@ -63,6 +67,9 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
   List<Map<String, dynamic>> _characters = [];
   Map<String, WatchHistoryItem> _history = {};
   Map<String, dynamic> _episodeSeasons = {};
+  final Map<String, String> _localizedCharacterNames = {};
+  final Set<String> _loadingLocalizedNames = {};
+  String? _workArtwork;
   bool _loading = true, _expanded = false, _summaryExpanded = false;
   String _section = 'episode', _filter = '全部';
   String? _error;
@@ -130,12 +137,7 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
   }
 
   Map<String, dynamic> get _metadata {
-    try {
-      final value = jsonDecode(_work['metadata_json']?.toString() ?? '{}');
-      return value is Map<String, dynamic> ? value : {};
-    } catch (_) {
-      return {};
-    }
+    return AnimeDetailMetadata.fromWork(_work);
   }
 
   Future<void> _loadCharacters() async {
@@ -145,6 +147,56 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
       final characters = await BangumiApiService.getPublicSubjectCharacters(id);
       if (mounted) setState(() => _characters = characters);
     } catch (_) {/* Optional metadata does not block the catalog. */}
+  }
+
+  String _characterName(Map character) {
+    final direct = character['name_cn']?.toString().trim();
+    if (direct?.isNotEmpty == true) return direct!;
+    final id = int.tryParse(character['id']?.toString() ?? '');
+    if (id == null) return character['name']?.toString() ?? '';
+    final key = 'character:$id';
+    final localized = _localizedCharacterNames[key];
+    if (localized?.isNotEmpty == true) return localized!;
+    unawaited(_loadCharacterName(id));
+    return character['name']?.toString() ?? '';
+  }
+
+  String _actorName(Map actor) {
+    final direct = actor['name_cn']?.toString().trim();
+    if (direct?.isNotEmpty == true) return direct!;
+    final id = int.tryParse(actor['id']?.toString() ?? '');
+    if (id == null) return actor['name']?.toString() ?? '';
+    final key = 'person:$id';
+    final localized = _localizedCharacterNames[key];
+    if (localized?.isNotEmpty == true) return localized!;
+    unawaited(_loadPersonName(id));
+    return actor['name']?.toString() ?? '';
+  }
+
+  Future<void> _loadCharacterName(int id) async {
+    const key = 'character:';
+    if (_loadingLocalizedNames.contains('$key$id')) return;
+    _loadingLocalizedNames.add('$key$id');
+    try {
+      final name = await BangumiApiService.getPublicCharacterChineseName(id);
+      if (!mounted || name?.isNotEmpty != true) return;
+      setState(() => _localizedCharacterNames['$key$id'] = name!);
+    } finally {
+      _loadingLocalizedNames.remove('$key$id');
+    }
+  }
+
+  Future<void> _loadPersonName(int id) async {
+    const key = 'person:';
+    if (_loadingLocalizedNames.contains('$key$id')) return;
+    _loadingLocalizedNames.add('$key$id');
+    try {
+      final name = await BangumiApiService.getPublicPersonChineseName(id);
+      if (!mounted || name?.isNotEmpty != true) return;
+      setState(() => _localizedCharacterNames['$key$id'] = name!);
+    } finally {
+      _loadingLocalizedNames.remove('$key$id');
+    }
   }
 
   int _loadGeneration = 0;
@@ -164,7 +216,18 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
         return order != 0 ? order : '${a['name']}'.compareTo('${b['name']}');
       });
       setState(() {
-        _assets = assets.where((a) => a['kind'] == 'video').toList();
+        _assets = assets
+            .where((a) => a['kind'] == 'video')
+            .map((asset) => {
+                  ...asset,
+                  'season_number': CloudMediaAssetPresentation.seasonNumber({
+                    'work_key': _work['work_key'],
+                    'work_title': _work['title_cn'] ?? _work['title'],
+                    ...asset,
+                  }),
+                })
+            .toList();
+        _workArtwork = null;
         final cached = _metadata['tmdb_episode_seasons'];
         _episodeSeasons =
             cached is Map ? Map<String, dynamic>.from(cached) : {};
@@ -173,6 +236,7 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
       });
       _refreshHistory();
       _loadEpisodeMetadata(generation);
+      _loadWorkArtwork(generation);
     } catch (_) {
       if (mounted && generation == _loadGeneration) {
         setState(() {
@@ -193,6 +257,31 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
       }
     } catch (_) {/* Optional metadata must not block playback. */} finally {
       service.close();
+    }
+  }
+
+  Future<void> _loadWorkArtwork(int generation) async {
+    String? artwork;
+    try {
+      final loader = widget.workArtworkLoader;
+      if (loader != null) {
+        artwork = await loader();
+      } else {
+        final service = TmdbMetadataService();
+        try {
+          artwork = await service.loadWorkArtwork(
+            sourceId: widget.sourceId,
+            work: _work,
+          );
+        } finally {
+          service.close();
+        }
+      }
+    } catch (_) {
+      return;
+    }
+    if (mounted && generation == _loadGeneration) {
+      setState(() => _workArtwork = artwork);
     }
   }
 
@@ -227,24 +316,60 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
 
   String _assetTitle(Map<String, Object?> asset) {
     if (CloudMediaAssetPresentation.category(asset) == 'extra') {
-      return CloudMediaAssetPresentation.extraTitle(asset) ?? _extraType(asset);
+      final special = CloudMediaAssetPresentation.specialEpisode(
+        asset,
+        _episodeSeasons,
+      );
+      final specialTitle = special?['name']?.toString().trim();
+      if (specialTitle?.isNotEmpty == true) return specialTitle!;
+      return CloudMediaAssetPresentation.extraDisplayTitle(asset);
     }
     final episode = CloudMediaAssetPresentation.episode(asset, _episodeSeasons);
     final title = episode?['name']?.toString().trim();
     if (title?.isNotEmpty == true) return title!;
     final matchedTitle = asset['episode_title']?.toString().trim();
-    return matchedTitle?.isNotEmpty == true ? matchedTitle! : _label(asset);
+    if (matchedTitle?.isNotEmpty == true) return matchedTitle!;
+    if (_episodes.length == 1 && asset['episode_number'] == null) {
+      final workTitle = (_work['title_cn']?.toString().trim().isNotEmpty == true
+              ? _work['title_cn']
+              : _work['title'])
+          ?.toString()
+          .trim();
+      if (workTitle?.isNotEmpty == true) return workTitle!;
+    }
+    return _label(asset);
   }
 
   String? _thumbnail(Map<String, Object?> asset) {
-    final episode = CloudMediaAssetPresentation.episode(asset, _episodeSeasons);
+    final isMovieMainVideo =
+        CloudMediaAssetPresentation.category(asset) == 'episode' &&
+            _episodes.length == 1 &&
+            asset['episode_number'] == null;
+    final episode = CloudMediaAssetPresentation.episode(
+          asset,
+          _episodeSeasons,
+        ) ??
+        CloudMediaAssetPresentation.specialEpisode(asset, _episodeSeasons);
     final still = episode?['still_path']?.toString().trim();
     if (still?.isNotEmpty == true) {
       return 'https://image.tmdb.org/t/p/w500$still';
     }
     final image = asset['still_url']?.toString().trim();
     if (image?.isNotEmpty == true) return image;
-    return _watched(asset)?.thumbnailPath;
+    final watched = _watched(asset)?.thumbnailPath;
+    if (watched?.isNotEmpty == true) return watched;
+    if (isMovieMainVideo) {
+      final metadata = _metadata;
+      final backdrop = metadata['backdrop_path']?.toString().trim();
+      if (backdrop?.isNotEmpty == true) {
+        return 'https://image.tmdb.org/t/p/w780$backdrop';
+      }
+      if (_workArtwork?.isNotEmpty == true) return _workArtwork;
+      final artwork =
+          (metadata['backdrop_url'] ?? metadata['fanart'])?.toString().trim();
+      if (artwork?.isNotEmpty == true) return artwork;
+    }
+    return null;
   }
 
   Future<void> _manage() async {
@@ -267,11 +392,14 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
 
   Widget _image(String? url,
       {BoxFit fit = BoxFit.cover, Alignment alignment = Alignment.center}) {
-    const placeholder = ColoredBox(
-        color: Color(0xFF2B2B2B),
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final placeholder = ColoredBox(
+        color: dark
+            ? const Color(0xFF2B2B2B)
+            : Theme.of(context).colorScheme.surfaceContainerHighest,
         child: Center(
-            child:
-                Icon(Icons.movie_outlined, color: Colors.white38, size: 32)));
+            child: Icon(Icons.movie_outlined,
+                color: dark ? Colors.white38 : Colors.black38, size: 32)));
     if (url == null || url.isEmpty) return placeholder;
     if (url.startsWith('assets/')) {
       return Image.asset(url,
@@ -297,25 +425,35 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
     if (raw != null && raw.isNotEmpty) {
       return 'https://image.tmdb.org/t/p/original$raw';
     }
-    return (_metadata['backdrop_url'] ?? _metadata['fanart'])?.toString();
+    final artwork =
+        (_metadata['backdrop_url'] ?? _metadata['fanart'])?.toString().trim();
+    if (artwork?.isNotEmpty == true) return artwork;
+    return _workArtwork?.trim().isNotEmpty == true ? _workArtwork : null;
+  }
+
+  String? get _backgroundArtwork {
+    final backdrop = _fanart;
+    if (backdrop?.isNotEmpty == true) return backdrop;
+    final poster = _work['poster_url']?.toString().trim();
+    return poster?.isNotEmpty == true ? poster : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final accent = AppAccentColors.current;
-    final meta = _metadata;
-    final date =
-        (meta['first_air_date'] ?? meta['release_date'] ?? meta['date'])
-                ?.toString() ??
-            '';
-    final genres = (meta['genres'] is List ? meta['genres'] as List : const [])
-        .map((g) => g is Map ? '${g['name']}' : g.toString())
-        .toList();
-    final tags = (meta['tags'] is List ? meta['tags'] as List : const [])
-        .whereType<Map>()
-        .take(8)
-        .map((g) => '${g['name']}')
-        .toList();
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final pageBackground =
+        dark ? const Color(0xFF1F1F1F) : theme.colorScheme.surface;
+    final foreground = theme.colorScheme.onSurface;
+    final secondaryText = foreground.withValues(alpha: .7);
+    final tertiaryText = foreground.withValues(alpha: .55);
+    final tagBackground =
+        dark ? Colors.black26 : foreground.withValues(alpha: .055);
+    final year = AnimeDetailMetadata.year(_work);
+    final tags = AnimeDetailMetadata.tags(_work);
+    final overview =
+        AnimeTextSanitizer.cleanSummary(_work['overview']?.toString()) ?? '';
     final title = (_work['title_cn']?.toString().isNotEmpty == true
                 ? _work['title_cn']
                 : _work['title'])
@@ -331,22 +469,44 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                 _extraType(a) == _filter))
         .toList();
     return Material(
-        color: const Color(0xFF1F1F1F),
+        key: const ValueKey('library-anime-detail-surface'),
+        color: pageBackground,
         child: DefaultTextStyle(
             style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-                color: Colors.white, locale: const Locale('zh', 'Hans')),
+                color: foreground, locale: const Locale('zh', 'Hans')),
             child: LayoutBuilder(builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 760;
+              final desktop = constraints.maxWidth >= 1100;
+              final wide = constraints.maxWidth >= 600;
+              final horizontalPadding = desktop ? 36.0 : (wide ? 24.0 : 16.0);
+              final availableWidth =
+                  (constraints.maxWidth - horizontalPadding * 2)
+                      .clamp(0.0, double.infinity);
               final contentWidth =
-                  (constraints.maxWidth * .72).clamp(700.0, 1180.0);
-              final posterWidth =
-                  wide ? (contentWidth * .21).clamp(180.0, 246.0) : 150.0;
+                  desktop ? availableWidth.clamp(0.0, 1500.0) : availableWidth;
+              final posterWidth = !wide
+                  ? availableWidth.clamp(0.0, 360.0)
+                  : desktop
+                      ? (contentWidth * .18).clamp(210.0, 246.0)
+                      : (contentWidth * .24).clamp(140.0, 190.0);
+              final horizontalGap = desktop ? 32.0 : (wide ? 20.0 : 0.0);
+              final tileColumns =
+                  (contentWidth / 240).floor().clamp(1, 5).toInt();
+              final tileWidth =
+                  (contentWidth - 12 * (tileColumns - 1)) / tileColumns;
+              final episodeTileWidth = wide ? tileWidth : 220.0;
+              final episodeTitleHeight =
+                  MediaQuery.textScalerOf(context).scale(13) * 1.4 * 2;
+              const scrollbarClearance = 16.0;
+              final episodeRailHeight = episodeTileWidth * 9 / 16 +
+                  8 +
+                  episodeTitleHeight +
+                  scrollbarClearance;
               final information = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title,
                         style: TextStyle(
-                            fontSize: wide ? 30 : 24,
+                            fontSize: desktop ? 30 : (wide ? 25 : 24),
                             fontWeight: FontWeight.w700,
                             height: 1.25)),
                     const SizedBox(height: 12),
@@ -356,13 +516,10 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                             '★ ${num.tryParse('${_work['rating']}')?.toStringAsFixed(1) ?? _work['rating']}',
                             style: TextStyle(
                                 color: accent, fontWeight: FontWeight.w600)),
-                      if (date.length >= 4)
-                        Text(date.substring(0, 4),
-                            style: const TextStyle(color: Colors.white70)),
+                      if (year != null)
+                        Text(year, style: TextStyle(color: secondaryText)),
                       Text('${_episodes.length} 集',
-                          style: const TextStyle(color: Colors.white70)),
-                      ...genres.map((g) => Text(g,
-                          style: const TextStyle(color: Colors.white70))),
+                          style: TextStyle(color: secondaryText)),
                     ]),
                     const SizedBox(height: 20),
                     widget.headerActions ??
@@ -393,54 +550,58 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 9, vertical: 4),
                                   decoration: BoxDecoration(
-                                      color: Colors.black26,
+                                      color: tagBackground,
                                       borderRadius: BorderRadius.circular(5)),
                                   child: Text(tag,
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.white70))))
+                                      style: TextStyle(
+                                          fontSize: 12, color: secondaryText))))
                               .toList())
                     ],
                     const SizedBox(height: 16),
-                    Text(
-                        _work['overview']?.toString().trim().isNotEmpty == true
-                            ? '${_work['overview']}'
-                            : '暂无作品简介',
+                    Text(overview.isNotEmpty ? overview : '暂无作品简介',
                         maxLines: _summaryExpanded ? null : 5,
                         overflow: _summaryExpanded
                             ? TextOverflow.visible
                             : TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFFCCCCCC),
-                            height: 1.8)),
-                    if ((_work['overview']?.toString().length ?? 0) > 180)
+                        style: TextStyle(
+                            fontSize: 14, color: secondaryText, height: 1.8)),
+                    if (overview.length > 180)
                       TextButton(
                           onPressed: () => setState(
                               () => _summaryExpanded = !_summaryExpanded),
                           child: Text(_summaryExpanded ? '收起简介' : '展开简介')),
                   ]);
               return Stack(fit: StackFit.expand, children: [
-                if (_fanart != null) Positioned.fill(child: _image(_fanart)),
-                const Positioned.fill(
+                if (_backgroundArtwork != null)
+                  Positioned.fill(
+                      child: _image(_backgroundArtwork,
+                          alignment: Alignment.topCenter)),
+                Positioned.fill(
                     child: DecoratedBox(
                         decoration: BoxDecoration(
                             gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [
-                      Color(0xA61F1F1F),
-                      Color(0xC71F1F1F),
-                      Color(0xFF1F1F1F)
-                    ],
-                                stops: [
-                      0,
-                      .6,
-                      1
-                    ])))),
+                                colors: dark
+                                    ? const [
+                                        Color(0xA61F1F1F),
+                                        Color(0xC71F1F1F),
+                                        Color(0xFF1F1F1F),
+                                      ]
+                                    : [
+                                        pageBackground.withValues(alpha: .72),
+                                        pageBackground.withValues(alpha: .9),
+                                        pageBackground,
+                                      ],
+                                stops: const [0, .6, 1])))),
                 SingleChildScrollView(
                     padding: EdgeInsets.fromLTRB(
-                        wide ? 28 : 16, 12, wide ? 28 : 16, 40),
+                        horizontalPadding,
+                        12,
+                        horizontalPadding,
+                        40 +
+                            MediaQuery.viewPaddingOf(context).bottom +
+                            (wide ? 0 : 96)),
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -448,8 +609,8 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                             IconButton(
                                 onPressed: widget.onBack,
                                 tooltip: '返回媒体库',
-                                icon: const Icon(Icons.arrow_back,
-                                    color: Colors.white)),
+                                icon:
+                                    Icon(Icons.arrow_back, color: foreground)),
                             const Spacer(),
                             if (widget.showAssociationManagement)
                               TextButton.icon(
@@ -460,19 +621,25 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                           ]),
                           Center(
                               child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                      maxWidth: wide ? contentWidth : 600),
+                                  key: const ValueKey(
+                                      'library-anime-detail-content'),
+                                  constraints:
+                                      BoxConstraints(maxWidth: contentWidth),
                                   child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        SizedBox(height: wide ? 18 : 8),
+                                        SizedBox(
+                                            height:
+                                                desktop ? 18 : (wide ? 14 : 8)),
                                         if (wide)
                                           Row(
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               children: [
                                                 SizedBox(
+                                                    key: const ValueKey(
+                                                        'library-anime-detail-poster'),
                                                     width: posterWidth,
                                                     height: posterWidth * 1.5,
                                                     child: ClipRRect(
@@ -482,12 +649,14 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                         child: _image(
                                                             _work['poster_url']
                                                                 ?.toString()))),
-                                                const SizedBox(width: 32),
+                                                SizedBox(width: horizontalGap),
                                                 Expanded(child: information),
                                               ])
                                         else ...[
                                           Center(
                                               child: SizedBox(
+                                                  key: const ValueKey(
+                                                      'library-anime-detail-poster'),
                                                   width: posterWidth,
                                                   height: posterWidth * 1.5,
                                                   child: ClipRRect(
@@ -502,9 +671,9 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                         ],
                                         if (_characters.isNotEmpty) ...[
                                           const SizedBox(height: 26),
-                                          const Text('角色',
+                                          Text('角色',
                                               style: TextStyle(
-                                                  color: Colors.white70)),
+                                                  color: secondaryText)),
                                           const SizedBox(height: 12),
                                           SizedBox(
                                               height: 136,
@@ -546,7 +715,8 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                                       height:
                                                                           7),
                                                                   Text(
-                                                                      '${c['name'] ?? ''}',
+                                                                      _characterName(
+                                                                          c),
                                                                       maxLines:
                                                                           1,
                                                                       overflow:
@@ -562,8 +732,8 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                                       actors
                                                                           .whereType<
                                                                               Map>()
-                                                                          .map((a) => a[
-                                                                              'name'])
+                                                                          .map(
+                                                                              _actorName)
                                                                           .join(
                                                                               ' / '),
                                                                       maxLines:
@@ -571,11 +741,11 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                                       overflow:
                                                                           TextOverflow
                                                                               .ellipsis,
-                                                                      style: const TextStyle(
+                                                                      style: TextStyle(
                                                                           fontSize:
                                                                               11,
                                                                           color:
-                                                                              Colors.white54))
+                                                                              tertiaryText))
                                                                 ]));
                                                       })))
                                         ],
@@ -625,7 +795,7 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                                               10),
                                                                       decoration:
                                                                           BoxDecoration(border: Border(bottom: BorderSide(color: _section == entry.key ? accent : Colors.transparent, width: 3))),
-                                                                      child: Text('${entry.value}  ${_assets.where((a) => CloudMediaAssetPresentation.category(a) == entry.key).length}', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: _section == entry.key ? accent : Colors.white60)))))
+                                                                      child: Text('${entry.value}  ${_assets.where((a) => CloudMediaAssetPresentation.category(a) == entry.key).length}', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: _section == entry.key ? accent : tertiaryText)))))
                                                       ]),
                                                   TextButton.icon(
                                                       onPressed: () => setState(
@@ -682,11 +852,15 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                               child: Text(_error!))
                                         else if (visible.isEmpty)
                                           Padding(
-                                              padding: const EdgeInsets.symmetric(
-                                                  vertical: 30),
-                                              child: Text(_section == 'extra' ? '暂无此分类的特典，可在关联管理中检查文件归属' : '暂无已关联正片，可在关联管理中检查文件归属',
-                                                  style: const TextStyle(
-                                                      color: Colors.white60)))
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 30),
+                                              child: Text(
+                                                  _section == 'extra'
+                                                      ? '暂无此分类的特典，可在关联管理中检查文件归属'
+                                                      : '暂无已关联正片，可在关联管理中检查文件归属',
+                                                  style: TextStyle(
+                                                      color: tertiaryText)))
                                         else if (_expanded)
                                           LayoutBuilder(
                                               builder: (_, c) => Wrap(
@@ -702,11 +876,9 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                                                       .toList()))
                                         else
                                           SizedBox(
-                                              height: 190,
-                                              child: ScrollConfiguration(
-                                                  behavior:
-                                                      const _DetailScrollBehavior(),
-                                                  child: Scrollbar(controller: _rail, thumbVisibility: true, child: ListView.separated(controller: _rail, scrollDirection: Axis.horizontal, itemCount: visible.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, i) => SizedBox(width: wide ? (contentWidth - 48) / 5 : 220, child: _tile(visible[i])))))),
+                                              key: const ValueKey('library-anime-detail-episode-rail'),
+                                              height: episodeRailHeight,
+                                              child: ScrollConfiguration(behavior: const _DetailScrollBehavior(), child: Scrollbar(controller: _rail, thumbVisibility: true, child: ListView.separated(controller: _rail, scrollDirection: Axis.horizontal, itemCount: visible.length, separatorBuilder: (_, __) => const SizedBox(width: 12), itemBuilder: (_, i) => SizedBox(width: episodeTileWidth, child: Padding(padding: const EdgeInsets.only(bottom: scrollbarClearance), child: _tile(visible[i]))))))),
                                       ]))),
                         ])),
                 if (widget.overlay != null) widget.overlay!,
@@ -715,6 +887,12 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
   }
 
   Widget _tile(Map<String, Object?> asset) {
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final foreground = theme.colorScheme.onSurface;
+    final subtleBorder =
+        dark ? Colors.white12 : foreground.withValues(alpha: .12);
+    final titleColor = foreground.withValues(alpha: .7);
     final progress = _progress(asset).clamp(0.0, 1.0);
     final resume = _resume != null &&
         _resume!['relative_path'] == asset['relative_path'] &&
@@ -727,7 +905,11 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                 ? '观看中'
                 : '未看';
     final accent = AppAccentColors.current;
+    final tileKey = ValueKey(
+      'library-anime-detail-tile:${asset['relative_path'] ?? asset['name']}',
+    );
     return InkWell(
+        key: tileKey,
         borderRadius: BorderRadius.circular(6),
         onTap: () => widget.onPlay(asset, false),
         child: Column(
@@ -740,7 +922,7 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
                       decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                              color: resume ? accent : Colors.white12,
+                              color: resume ? accent : subtleBorder,
                               width: resume ? 2 : 1)),
                       child: ClipRRect(
                           borderRadius: BorderRadius.circular(5),
@@ -768,8 +950,8 @@ class _LibraryAnimeDetailPageState extends State<LibraryAnimeDetailPage>
               Text(_assetTitle(asset),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 13, height: 1.4, color: Colors.white70)),
+                  style:
+                      TextStyle(fontSize: 13, height: 1.4, color: titleColor)),
             ]));
   }
 

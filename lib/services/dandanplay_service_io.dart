@@ -2215,6 +2215,7 @@ class DandanplayService {
     int tmdbId, {
     int? seasonNumber,
     bool requireUniqueMatch = false,
+    String? titleHint,
   }) async {
     try {
       final appSecret = await getAppSecret();
@@ -2270,16 +2271,21 @@ class DandanplayService {
         debugPrint('[弹弹play服务] TMDB $tmdbId 候选不唯一，保留现有作品信息');
         return null;
       }
-      int selectedIndex = 0;
       if (candidates.length > 1) {
         candidates.sort(
           (a, b) => (a['animeId'] as int).compareTo(b['animeId'] as int),
         );
-        selectedIndex = seasonNumber != null &&
-                seasonNumber >= 1 &&
-                seasonNumber <= candidates.length
-            ? seasonNumber! - 1
-            : 0;
+      }
+      final selectedIndex = selectTmdbCandidateIndex(
+        candidates,
+        seasonNumber: seasonNumber,
+        titleHint: titleHint,
+      );
+      if (selectedIndex == null) {
+        debugPrint('[弹弹play服务] tmdbId 搜索结果中缺少可用候选项');
+        return null;
+      }
+      if (candidates.length > 1) {
         debugPrint(
           '[弹弹play服务] tmdbId 搜索到 ${candidates.length} 个番剧，选择第 ${selectedIndex + 1} 个',
         );
@@ -2333,6 +2339,85 @@ class DandanplayService {
       debugPrint('[弹弹play服务] 通过 tmdbId 获取番剧详情出错: $e');
       return null;
     }
+  }
+
+  /// Selects one of the anime entries returned for a TMDB ID.
+  ///
+  /// The original playback matcher still selects by [seasonNumber] or the
+  /// first anime ID. Catalog scraping passes [titleHint] so a series folder
+  /// can choose the matching season instead of discarding a multi-candidate
+  /// result as ambiguous.
+  static int? selectTmdbCandidateIndex(
+    List<Map<String, dynamic>> candidates, {
+    int? seasonNumber,
+    String? titleHint,
+  }) {
+    if (candidates.isEmpty) return null;
+
+    final hint = _normalizeTmdbCandidateTitle(titleHint ?? '');
+    if (hint.isNotEmpty) {
+      var bestIndex = -1;
+      var bestScore = 0;
+      for (var index = 0; index < candidates.length; index++) {
+        final candidate = _normalizeTmdbCandidateTitle(
+          candidates[index]['animeTitle']?.toString() ?? '',
+        );
+        final score = _tmdbCandidateTitleScore(hint, candidate);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = index;
+        }
+      }
+      if (bestIndex >= 0) return bestIndex;
+    }
+
+    if (seasonNumber != null &&
+        seasonNumber >= 1 &&
+        seasonNumber <= candidates.length) {
+      return seasonNumber - 1;
+    }
+    return 0;
+  }
+
+  static String _normalizeTmdbCandidateTitle(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\[[^\]]*\]|\{[^}]*\}'), '')
+        .replaceAll(RegExp(r'\(\s*(?:19|20)\d{2}\s*\)'), '')
+        .replaceAll(RegExp(r'(?<!\d)(?:19|20)\d{2}(?!\d)'), '')
+        .replaceAll(
+          RegExp(r'[\s\-_—–:：.()（）\[\]【】{}!?！？・·,，、;；]+'),
+          '',
+        );
+  }
+
+  static int _tmdbCandidateTitleScore(String hint, String candidate) {
+    if (hint.isEmpty || candidate.isEmpty) return 0;
+    if (hint == candidate) return 100000;
+    if (candidate.contains(hint)) {
+      return 90000 - (candidate.length - hint.length);
+    }
+    if (hint.contains(candidate)) {
+      return 80000 - (hint.length - candidate.length);
+    }
+
+    final common = _longestCommonSubsequenceLength(hint, candidate);
+    if (common < 3) return 0;
+    return common * 1000 - (hint.length + candidate.length - common * 2);
+  }
+
+  static int _longestCommonSubsequenceLength(String left, String right) {
+    var previous = List<int>.filled(right.length + 1, 0);
+    for (var i = 1; i <= left.length; i++) {
+      final current = List<int>.filled(right.length + 1, 0);
+      for (var j = 1; j <= right.length; j++) {
+        current[j] = left.codeUnitAt(i - 1) == right.codeUnitAt(j - 1)
+            ? previous[j - 1] + 1
+            : (previous[j] > current[j - 1] ? previous[j] : current[j - 1]);
+      }
+      previous = current;
+    }
+    return previous[right.length];
   }
 
   // 获取用户对特定剧集的观看状态

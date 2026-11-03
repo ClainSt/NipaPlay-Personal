@@ -1682,6 +1682,7 @@ class DandanplayService {
     int tmdbId, {
     int? seasonNumber,
     bool requireUniqueMatch = false,
+    String? titleHint,
   }) async {
     debugPrint('[弹弹play服务-Web] getBangumiByTmdbId not supported on web');
     return null;
