@@ -108,6 +108,8 @@ void main() {
       () {
     for (final name in [
       '[LoliHouse] 22／7 - 01 [BDRip 1080p HEVC-10bit FLAC AAC].mkv',
+      '[AI-Raws] 29歳独身中堅冒険者の日常 #01 (BD HEVC 1920x1080 FLAC)[89A35093].mkv',
+      '29歳独身中堅冒険者の日常 ＃01.mkv',
       '[Group] 22／7 - 01 [1080p].mkv',
       '[Group] 22_7 - 01v2 [Ma10p_1080p].mkv',
       '01.mkv',

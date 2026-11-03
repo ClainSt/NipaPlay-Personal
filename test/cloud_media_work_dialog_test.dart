@@ -18,7 +18,8 @@ void main() {
   final database = CloudMediaIndexDatabase.instance;
   late Directory temp;
   late PathProviderPlatform original;
-  const filename = '[LoliHouse] 22／7 - 01 [BDRip 1080p HEVC-10bit FLAC AAC].mkv';
+  const filename =
+      '[LoliHouse] 22／7 - 01 [BDRip 1080p HEVC-10bit FLAC AAC].mkv';
   const work = <String, Object?>{'work_key': '.', 'title': '22/7'};
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -67,7 +68,23 @@ void main() {
         relativePath: '02.mkv',
         workKey: '.',
         category: 'review');
+    const hashName =
+        '[AI-Raws] 29歳独身中堅冒険者の日常 #01 (BD HEVC 1920x1080 FLAC)[89A35093].mkv';
+    await database.upsertAssets([
+      {
+        'source_id': 'test',
+        'relative_path': hashName,
+        'name': hashName,
+        'kind': 'video',
+        'category': 'review',
+        'work_key': '.'
+      }
+    ]);
     final rows = await database.getAssets(sourceId: 'test');
+    expect(rows.singleWhere((row) => row['name'] == hashName)['category'],
+        'episode');
+    expect(rows.singleWhere((row) => row['name'] == hashName)['episode_number'],
+        1);
     final repaired = rows.singleWhere((row) => row['name'] == filename);
     expect(repaired['category'], 'episode');
     expect(repaired['episode_number'], 1);

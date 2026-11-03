@@ -28,6 +28,8 @@ abstract final class CloudMediaFileClassifier {
       RegExp(r'\b(?:EP?|Episode)[ ._-]*(\d{1,3})(?:v\d+)?\b',
           caseSensitive: false),
       RegExp(r'第\s*(\d{1,3})\s*[话話集]'),
+      RegExp(r'[#＃][ ._]*(\d{1,3})(?:v\d+)?(?=[ ._\[(]|$)',
+          caseSensitive: false),
       RegExp(r'\[(\d{1,3})(?:v\d+)?(?:\]|[ ._])', caseSensitive: false),
       RegExp(r'(?:^|[ ._])[-–—][ ._]*(\d{1,3})(?:v\d+)?(?=[ ._\[(]|$)',
           caseSensitive: false),
