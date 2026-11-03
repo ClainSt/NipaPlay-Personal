@@ -33,7 +33,10 @@ abstract final class CloudMediaFileClassifier {
       RegExp(r'\[(\d{1,3})(?:v\d+)?(?:\]|[ ._])', caseSensitive: false),
       RegExp(r'(?:^|[ ._])[-–—][ ._]*(\d{1,3})(?:v\d+)?(?=[ ._\[(]|$)',
           caseSensitive: false),
-      RegExp(r'^(\d{1,3})(?:v\d+)?(?=[ ._\[(]|$)', caseSensitive: false),
+      RegExp(r'^(\d{1,3})(?:v\d+)?(?=\.[a-z0-9]+$|[ ._]*[-–—\[(]|$)',
+          caseSensitive: false),
+      RegExp(r'[ ._](\d{1,3})(?:v\d+)?(?=[ ._]*[\[(]|\.[a-z0-9]+$|$)',
+          caseSensitive: false),
       RegExp(r'[（(](\d{1,3})(?:v\d+)?[)）]', caseSensitive: false),
     ];
     for (final pattern in patterns) {

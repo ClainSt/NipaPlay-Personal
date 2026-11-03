@@ -80,7 +80,28 @@ void main() {
         'work_key': '.'
       }
     ]);
+    const otherNames = [
+      '[ANK-Raws] 91 Days 01 (BDrip 1920x1080 HEVC-YUV420P10 FLAC).mkv',
+      'Lets.Play.S01E01.Life.is.S-Rank.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264-VARYG.mkv',
+    ];
+    await database.upsertAssets([
+      for (final name in otherNames)
+        {
+          'source_id': 'test',
+          'relative_path': name,
+          'name': name,
+          'kind': 'video',
+          'category': 'review',
+          'work_key': '.'
+        }
+    ]);
     final rows = await database.getAssets(sourceId: 'test');
+    for (final name in otherNames) {
+      expect(rows.singleWhere((row) => row['name'] == name)['category'],
+          'episode');
+      expect(
+          rows.singleWhere((row) => row['name'] == name)['episode_number'], 1);
+    }
     expect(rows.singleWhere((row) => row['name'] == hashName)['category'],
         'episode');
     expect(rows.singleWhere((row) => row['name'] == hashName)['episode_number'],

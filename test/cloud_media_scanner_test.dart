@@ -110,6 +110,8 @@ void main() {
       '[LoliHouse] 22／7 - 01 [BDRip 1080p HEVC-10bit FLAC AAC].mkv',
       '[AI-Raws] 29歳独身中堅冒険者の日常 #01 (BD HEVC 1920x1080 FLAC)[89A35093].mkv',
       '29歳独身中堅冒険者の日常 ＃01.mkv',
+      '[ANK-Raws] 91 Days 01 (BDrip 1920x1080 HEVC-YUV420P10 FLAC).mkv',
+      'Lets.Play.S01E01.Life.is.S-Rank.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264-VARYG.mkv',
       '[Group] 22／7 - 01 [1080p].mkv',
       '[Group] 22_7 - 01v2 [Ma10p_1080p].mkv',
       '01.mkv',
@@ -124,6 +126,8 @@ void main() {
     }
     for (final name in [
       '22／7.mkv',
+      '91 Days.mkv',
+      '29歳独身中堅冒険者の日常.mkv',
       'Show [1080p].mkv',
       'Show [2020].mkv',
       'Show x265.mkv'
