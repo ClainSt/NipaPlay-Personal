@@ -1,3 +1,4 @@
+import 'package:nipaplay/utils/cloud_media_file_classifier.dart';
 import 'dart:io';
 import 'dart:convert';
 
@@ -935,12 +936,42 @@ class CloudMediaIndexDatabase {
       clauses.add('work_key = ?');
       args.add(workKey);
     }
-    return db.query(
+    final rows = await db.query(
       'cloud_media_asset',
       where: clauses.isEmpty ? null : clauses.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'relative_path COLLATE NOCASE',
     );
+    final result = <Map<String, Object?>>[];
+    final batch = db.batch();
+    var changed = false;
+    for (final row in rows) {
+      final path = '${row['relative_path']}'.replaceAll('\\', '/');
+      final directory =
+          path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+      final name = '${row['name']}';
+      if (row['kind'] == 'video' &&
+          row['category'] == 'review' &&
+          row['relation_locked'] != 1 &&
+          CloudMediaFileClassifier.classifyAsset(directory, name, 'video') ==
+              'episode') {
+        final values = <String, Object?>{
+          'category': 'episode',
+          'episode_number':
+              CloudMediaFileClassifier.episodeNumberFromName(name),
+        };
+        batch.update('cloud_media_asset', values,
+            where:
+                'source_id = ? AND relative_path = ? AND relation_locked = 0 AND category = ?',
+            whereArgs: [row['source_id'], row['relative_path'], 'review']);
+        result.add({...row, ...values});
+        changed = true;
+      } else {
+        result.add(row);
+      }
+    }
+    if (changed) await batch.commit(noResult: true);
+    return result;
   }
 
   Future<void> updateAssetRelation({

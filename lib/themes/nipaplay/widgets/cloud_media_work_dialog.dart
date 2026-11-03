@@ -114,68 +114,79 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('修改文件归属'),
           content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(asset['name']?.toString() ?? ''),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  initialValue: _categories.containsKey(selectedCategory)
-                      ? selectedCategory
-                      : 'review',
-                  decoration: const InputDecoration(labelText: '内容分类'),
-                  items: [
-                    for (final entry in _categories.entries)
-                      DropdownMenuItem(
-                        value: entry.key,
-                        child: Text(entry.value),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() => selectedCategory = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: _works.any(
-                    (work) => work['work_key'] == selectedWorkKey,
-                  )
-                      ? selectedWorkKey
-                      : '.',
-                  decoration: const InputDecoration(labelText: '所属作品'),
-                  items: [
-                    const DropdownMenuItem(value: '.', child: Text('未关联')),
-                    for (final work in _works)
-                      DropdownMenuItem(
-                        value: work['work_key']?.toString() ?? '.',
-                        child: Text(_workTitle(work),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() => selectedWorkKey = value);
-                    }
-                  },
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => _createWork(
-                      setDialogState: setDialogState,
-                      setSelectedWorkKey: (value) => selectedWorkKey = value,
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(asset['name']?.toString() ?? ''),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: _categories.containsKey(selectedCategory)
+                          ? selectedCategory
+                          : 'review',
+                      decoration: const InputDecoration(labelText: '内容分类'),
+                      items: [
+                        for (final entry in _categories.entries)
+                          DropdownMenuItem(
+                            value: entry.key,
+                            child: Text(entry.value),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => selectedCategory = value);
+                        }
+                      },
                     ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('新建作品后关联'),
-                  ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: _works.any(
+                        (work) => work['work_key'] == selectedWorkKey,
+                      )
+                          ? selectedWorkKey
+                          : '.',
+                      decoration: const InputDecoration(labelText: '所属作品'),
+                      items: [
+                        DropdownMenuItem(
+                            value: '.',
+                            child: Text(
+                                _works.any((work) => work['work_key'] == '.')
+                                    ? _workTitle(_works.firstWhere(
+                                        (work) => work['work_key'] == '.'))
+                                    : '未关联')),
+                        for (final work
+                            in _works.where((work) => work['work_key'] != '.'))
+                          DropdownMenuItem(
+                            value: work['work_key']?.toString() ?? '.',
+                            child: Text(_workTitle(work),
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => selectedWorkKey = value);
+                        }
+                      },
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => _createWork(
+                          setDialogState: setDialogState,
+                          setSelectedWorkKey: (value) =>
+                              selectedWorkKey = value,
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('新建作品后关联'),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              )),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -262,7 +273,12 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
   Widget build(BuildContext context) {
     final workKey = _work['work_key']?.toString() ?? '.';
     final title = _workTitle(_work);
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return AlertDialog(
+      insetPadding:
+          EdgeInsets.symmetric(horizontal: compact ? 12 : 40, vertical: 24),
+      contentPadding:
+          EdgeInsets.fromLTRB(compact ? 16 : 24, 12, compact ? 16 : 24, 12),
       title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       content: SizedBox(
         width: 760,
@@ -292,7 +308,8 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
                     .toList();
             return Column(
               children: [
-                if (_work['overview']?.toString().isNotEmpty == true)
+                if (!compact &&
+                    _work['overview']?.toString().isNotEmpty == true)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Align(
@@ -330,42 +347,55 @@ class _CloudMediaWorkDialogState extends State<CloudMediaWorkDialog> {
                           separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final asset = shown[index];
-                            final category =
-                                asset['category']?.toString() ?? '';
-                            final openable = asset['kind'] == 'video';
-                            return ListTile(
-                              leading: Icon(_iconFor(asset)),
-                              title: Text(asset['name']?.toString() ?? '',
-                                  maxLines: 1, overflow: TextOverflow.ellipsis),
-                              subtitle: Text(
-                                '${_categories[category] ?? category} · ${asset['relative_path'] ?? ''}'
-                                '${asset['relation_locked'] == 1 ? ' · 已锁定' : ''}',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: Wrap(
-                                spacing: 0,
+                            return LayoutBuilder(
+                                builder: (context, constraints) {
+                              final narrow = constraints.maxWidth < 520;
+                              final actions = Wrap(
+                                alignment: WrapAlignment.end,
                                 children: [
-                                  if (openable)
-                                    IconButton(
+                                  IconButton(
                                       tooltip: '打开',
                                       onPressed: () =>
                                           widget.onOpenAsset(context, asset),
-                                      icon: const Icon(Icons.open_in_new),
-                                    ),
+                                      icon: const Icon(Icons.open_in_new)),
                                   IconButton(
-                                    tooltip: '修改归属或分类',
-                                    onPressed: () => _editAsset(asset),
-                                    icon: const Icon(Icons.tune),
-                                  ),
+                                      tooltip: '修改归属或分类',
+                                      onPressed: () => _editAsset(asset),
+                                      icon: const Icon(Icons.tune)),
                                   IconButton(
-                                    tooltip: '撤销上次修改',
-                                    onPressed: () => _undoAsset(asset),
-                                    icon: const Icon(Icons.undo),
-                                  ),
+                                      tooltip: '撤销上次修改',
+                                      onPressed: () => _undoAsset(asset),
+                                      icon: const Icon(Icons.undo)),
                                 ],
-                              ),
-                            );
+                              );
+                              final tile = ListTile(
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: narrow ? 0 : 16),
+                                leading: narrow ? null : Icon(_iconFor(asset)),
+                                title: Text(asset['name']?.toString() ?? '',
+                                    maxLines: narrow ? 3 : 1,
+                                    overflow: TextOverflow.ellipsis),
+                                subtitle: Text(
+                                    '${_categories[asset['category']] ?? asset['category']} · ${asset['relative_path'] ?? ''}'
+                                    '${asset['relation_locked'] == 1 ? ' · 已锁定' : ''}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis),
+                                trailing: narrow ? null : actions,
+                                onTap: () => _editAsset(asset),
+                              );
+                              return narrow
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        tile,
+                                        Align(
+                                            alignment: Alignment.centerRight,
+                                            child: actions)
+                                      ],
+                                    )
+                                  : tile;
+                            });
                           },
                         ),
                 ),

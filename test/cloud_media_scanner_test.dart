@@ -104,6 +104,43 @@ String _propfindDocument(List<String> resources) =>
     '<d:multistatus xmlns:d="DAV:">${resources.join()}</d:multistatus>';
 
 void main() {
+  test('22/7 and numeric releases extract episode tokens, not title numbers',
+      () {
+    for (final name in [
+      '[LoliHouse] 22／7 - 01 [BDRip 1080p HEVC-10bit FLAC AAC].mkv',
+      '[Group] 22／7 - 01 [1080p].mkv',
+      '[Group] 22_7 - 01v2 [Ma10p_1080p].mkv',
+      '01.mkv',
+      '01 - title.mkv',
+      '22／7 E01.mkv',
+      '22／7 Episode 01.mkv',
+      '22／7 (01).mkv',
+      '[Group] 22／7 [01 Ma10p_1080p].mkv',
+    ]) {
+      expect(CloudMediaScanner.episodeNumberFromName(name), 1, reason: name);
+      expect(CloudMediaScanner.classifyAsset('22／7', name, 'video'), 'episode');
+    }
+    for (final name in [
+      '22／7.mkv',
+      'Show [1080p].mkv',
+      'Show [2020].mkv',
+      'Show x265.mkv'
+    ]) {
+      expect(CloudMediaScanner.episodeNumberFromName(name), isNull,
+          reason: name);
+    }
+    for (final name in [
+      '22／7 - 01 NCOP.mkv',
+      '22／7 SP01.mkv',
+      '22／7 OVA 01.mkv',
+      '22／7 - 01 MV.mkv'
+    ]) {
+      expect(CloudMediaScanner.classifyAsset('22／7', name, 'video'), 'extra');
+    }
+    expect(CloudMediaScanner.classifyAsset(r'22／7\SPs', '01.mkv', 'video'),
+        'extra');
+  });
+
   group('CloudMediaScanner filename metadata', () {
     test('recursive scan only enumerates WebDAV directories', () async {
       final webDav = _FakeWebDavService();
